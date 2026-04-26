@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 112
+local LG_VERSION = 113
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1322,6 +1322,7 @@ diHitbox.Text=""; diHitbox.AutoButtonColor=false
 diHitbox.ZIndex=110; diHitbox.Parent=DI_Frame
 
 local function diRestoreSize()
+	if diIsCollapsing then return end
 	local targetW = DI_SHOWING and diCurrentTotalW or DI_DOT
 	local targetH = DI_SHOWING and DI_H or DI_DOT
 	tween(DI_Frame, 0.3, {Size=UDim2.fromOffset(targetW, targetH)}, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -1329,7 +1330,7 @@ end
 
 -- Hover: grow slightly on enter, restore on leave
 diHitbox.MouseEnter:Connect(function()
-	if activeDragLabel ~= nil then return end
+	if activeDragLabel ~= nil or diIsCollapsing then return end
 	local cw = DI_Frame.AbsoluteSize.X; local ch = DI_Frame.AbsoluteSize.Y
 	tween(DI_Frame, 0.18, {Size=UDim2.fromOffset(cw+8, ch+4)}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 end)
@@ -1348,6 +1349,7 @@ local diCurrentLabel   = nil
 local diCurrentType    = nil  -- current DI type: "slider"/"warning"/"error"/etc.
 local diCurrentTotalW  = 190
 local diOpening        = false  -- true while expand animation is in progress
+local diIsCollapsing   = false  -- locks hover interactions while closing
 
 diClearContent = function()
 	diIcon.Image = ""
@@ -1366,9 +1368,11 @@ diCancelAll = function()
 	if diExpandJigTask  then task.cancel(diExpandJigTask);  diExpandJigTask  = nil end
 	if diHideThread     then task.cancel(diHideThread);     diHideThread     = nil end
 	diOpening = false
+	diIsCollapsing = false
 end
 
 local function diHide()
+	diIsCollapsing = false
 	diHideThread = nil
 	diCollapseThread = nil
 	-- Snap back to dot — frame stays visible
@@ -1392,8 +1396,8 @@ local function diHide()
 end
 
 local function diCollapseToDot(onDone)
+	diIsCollapsing = true
 	-- Phase 1: tween width AND height together to DI_DOT (Quint so it's fast at end)
-	-- This avoids the "line" look because both dimensions arrive at the same time
 	TweenService:Create(DI_Frame,
 		TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
 		{Size=UDim2.fromOffset(DI_DOT, DI_DOT)}):Play()
@@ -1413,45 +1417,46 @@ end
 
 local function diDismiss()
 	diDismissThread = nil
-	-- A stale dismiss thread scheduled by a previous drag can fire while the
-	-- user is already dragging another slider. Bail out — the active drag
-	-- will schedule its own dismiss on release.
 	if activeDragLabel ~= nil then return end
-	-- Snapshot label so collapse can detect if a new notification opened
 	local dismissingLabel = diCurrentLabel
-	-- Use same animation as manual click: instant content clear then diCollapseToDot
-	diContent.GroupTransparency = 1
-	diClearContent()
-	diCollapseThread = task.delay(0, function()
+	-- Smoothly fade content out before collapsing
+	TweenService:Create(diContent,
+		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{GroupTransparency = 1}):Play()
+	diCollapseThread = task.delay(0.1, function()
 		diCollapseThread = nil
-		-- If a new slider drag started, abort.
 		if activeDragLabel ~= nil then
 			diContent.GroupTransparency = 0
 			return
 		end
-		-- If a new *different* notification opened, abort.
 		if diCurrentLabel ~= dismissingLabel then
 			diContent.GroupTransparency = 0
 			return
 		end
-		-- If dismiss was rescheduled, stay open.
 		if diDismissThread ~= nil then
 			diContent.GroupTransparency = 0
 			return
 		end
+		diClearContent()
 		diCollapseToDot(diHide)
 	end)
 end
 
--- Click: instantly hide contents then collapse to dot
+-- Click: smoothly fade contents then collapse to dot
 diHitbox.MouseButton1Click:Connect(function()
 	if activeDragLabel ~= nil then return end
 	if DI_SHOWING then
 		diCancelAll()
 		DI_QUEUE = {}
-		diContent.GroupTransparency = 1
-		diClearContent()
-		diCollapseToDot(diHide)
+		DI_SHOWING = false
+		diIsCollapsing = true
+		TweenService:Create(diContent,
+			TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{GroupTransparency = 1}):Play()
+		task.delay(0.1, function()
+			diClearContent()
+			diCollapseToDot(diHide)
+		end)
 	end
 end)
 
