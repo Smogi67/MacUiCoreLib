@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 117
+local LG_VERSION = 118
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1445,7 +1445,16 @@ local function diDismiss()
 	end)
 end
 
--- Manual click-to-collapse removed — DI dismisses only via auto-timer.
+-- Manual click-to-collapse: fade content, then collapse to dot.
+-- Only fires when the island is fully expanded and not already animating/collapsing.
+diHitbox.MouseButton1Click:Connect(function()
+	if not DI_SHOWING then return end
+	if diIsCollapsing or diOpening then return end
+	if activeDragLabel ~= nil then return end
+	-- Cancel pending auto-dismiss so we don't double-fire
+	if diDismissThread then task.cancel(diDismissThread); diDismissThread = nil end
+	diDismiss()
+end)
 
 local function diExpand(ctrlType, labelText, valueText, isDragging)
 	local icon   = DI_TYPE_ICON[ctrlType] or DI_TYPE_ICON.custom
