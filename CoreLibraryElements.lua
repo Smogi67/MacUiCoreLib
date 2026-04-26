@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 123
+local LG_VERSION = 124
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1681,7 +1681,7 @@ local function notify(ctrlType, label, value)
 	end
 	local isSliderActive = DI_SHOWING and (diCurrentType == "slider" or diCurrentType == "warning" or diCurrentType == "error")
 	local isSliderLike   = (ctrlType == "slider" or ctrlType == "warning" or ctrlType == "error")
-	if DI_SHOWING and ((diCurrentLabel == label and not diOpening) or (isSliderActive and isSliderLike)) then
+	if DI_SHOWING and (diCurrentLabel == label and not diOpening) then
 		local icon   = DI_TYPE_ICON[ctrlType] or DI_TYPE_ICON.custom
 		local accent = DI_TYPE_COLOR[ctrlType] or T.blue
 		diCurrentType = ctrlType
