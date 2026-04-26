@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 115
+local LG_VERSION = 117
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1397,12 +1397,15 @@ end
 
 local function diCollapseToDot(onDone)
 	diIsCollapsing = true
-	-- Phase 1: tween width AND height together to DI_DOT (Quint so it's fast at end)
+	-- Phase 1: tween width AND height together to DI_DOT.
+	-- Use Quad/In (linear-ish) instead of Quint/In to avoid the front-loaded
+	-- easing that makes the frame look like it's frozen in a wide pill before
+	-- snapping to a dot at the end.
 	TweenService:Create(DI_Frame,
-		TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+		TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 		{Size=UDim2.fromOffset(DI_DOT, DI_DOT)}):Play()
 	-- Phase 2: once it's a circle, pulse outward 4px then snap back (tiny bounce)
-	task.delay(0.25, function()
+	task.delay(0.18, function()
 		TweenService:Create(DI_Frame,
 			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{Size=UDim2.fromOffset(DI_DOT + 8, DI_DOT + 8)}):Play()
@@ -1442,15 +1445,7 @@ local function diDismiss()
 	end)
 end
 
--- Click: use the exact same animation as auto-dismiss
-diHitbox.MouseButton1Click:Connect(function()
-	if activeDragLabel ~= nil then return end
-	if DI_SHOWING then
-		diCancelAll()
-		DI_QUEUE = {}
-		diDismiss()
-	end
-end)
+-- Manual click-to-collapse removed — DI dismisses only via auto-timer.
 
 local function diExpand(ctrlType, labelText, valueText, isDragging)
 	local icon   = DI_TYPE_ICON[ctrlType] or DI_TYPE_ICON.custom
