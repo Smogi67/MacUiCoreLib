@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 121
+local LG_VERSION = 122
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1181,6 +1181,10 @@ local DI_TYPE_ICON = {
 	warning  = "",   -- "Warning"
 }
 
+-- Dropdown UI icon paths (populated by loadDIIcons)
+local LG_ICON_ARROW  = ""  -- Arrow dropdown menu.png
+local LG_ICON_CHECK  = ""  -- Checked.png
+
 -- Fetch and cache DI icons from GitHub on boot.
 -- Icons are stored locally via writefile so they persist across restarts.
 local function loadDIIcons()
@@ -1195,6 +1199,8 @@ local function loadDIIcons()
 		custom   = "Custom circle.png",
 		error    = "Error.png",
 		warning  = "Warning.png",
+		["Arrow dropdown menu"] = "Arrow dropdown menu.png",
+		["Checked"]             = "Checked.png",
 	}
 	local GITHUB_BASE = "https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons"
 
@@ -1216,8 +1222,9 @@ local function loadDIIcons()
 		local exists = false
 		pcall(function() exists = isfile and isfile(localPath) end)
 
+		local assetId = ""
 		if exists then
-			pcall(function() DI_TYPE_ICON[key] = getcustomasset(localPath) end)
+			pcall(function() assetId = getcustomasset(localPath) end)
 		else
 			-- Encode spaces as %20 so HttpGet doesn't reject the URL
 			local safeFileName = string.gsub(fileName, " ", "%%20")
@@ -1227,10 +1234,20 @@ local function loadDIIcons()
 			if ok and data and not string.match(data, "404: Not Found") then
 				pcall(function()
 					writefile(localPath, data)
-					DI_TYPE_ICON[key] = getcustomasset(localPath)
+					assetId = getcustomasset(localPath)
 				end)
 			else
 				warn("[LiquidGlass] Failed to download icon: " .. fileName)
+			end
+		end
+
+		if assetId ~= "" then
+			if DI_TYPE_ICON[key] ~= nil then
+				DI_TYPE_ICON[key] = assetId
+			elseif key == "Arrow dropdown menu" then
+				LG_ICON_ARROW = assetId
+			elseif key == "Checked" then
+				LG_ICON_CHECK = assetId
 			end
 		end
 	end
@@ -2141,7 +2158,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 	pillLbl.ZIndex=17; pillLbl.Parent=pill
 	local chevron=Instance.new("ImageLabel"); chevron.Size=UDim2.fromOffset(16,16); chevron.AnchorPoint=Vector2.new(1,0.5)
 	chevron.Position=UDim2.new(1,-8,0.5,0); chevron.BackgroundTransparency=1
-	chevron.Image="https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/7fc55759e7b2b44f10db31b92ddfaaeb7155f576/Icons/Arrow%20dropdown%20menu.png"
+	chevron.Image=LG_ICON_ARROW
 	chevron.ZIndex=17; chevron.Parent=pill
 
 	-- Dropdown panel (floats in ScreenGui, solid dark — same style as search results)
@@ -2173,7 +2190,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		local checkLbl=Instance.new("ImageLabel"); checkLbl.Size=UDim2.fromOffset(16,16)
 		checkLbl.AnchorPoint=Vector2.new(1,0.5); checkLbl.Position=UDim2.new(1,-8,0.5,0)
 		checkLbl.BackgroundTransparency=1
-		checkLbl.Image=i==selectedIdx and "https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons/Checked.png" or ""
+		checkLbl.Image=i==selectedIdx and LG_ICON_CHECK or ""
 		checkLbl.ZIndex=53; checkLbl.Parent=ob
 		optionBtns[i]={btn=ob,lbl=ol,check=checkLbl}
 		ob.MouseEnter:Connect(function() tween(ob,0.08,{BackgroundTransparency=0.55}) end)
@@ -2185,7 +2202,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 				optionBtns[selectedIdx].check.Image=""
 			end
 			selectedIdx=i; pillLbl.Text=opt
-			ol.TextColor3=T.textPrimary; checkLbl.Image="https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons/Checked.png"
+			ol.TextColor3=T.textPrimary; checkLbl.Image=LG_ICON_CHECK
 			-- Close FIRST so that even if the user callback errors, the panel
 			-- still closes cleanly. Wrap callback in pcall for the same reason.
 			closePanel()
@@ -2321,7 +2338,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 			pillLbl.Text=options[selectedIdx]
 			if optionBtns[selectedIdx] then
 				optionBtns[selectedIdx].lbl.TextColor3=T.textPrimary
-				optionBtns[selectedIdx].check.Image="https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons/Checked.png"
+				optionBtns[selectedIdx].check.Image=LG_ICON_CHECK
 			end
 		end
 	}
