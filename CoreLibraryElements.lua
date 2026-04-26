@@ -1251,7 +1251,21 @@ local function loadDIIcons()
 			end
 		end
 	end
+	-- Flush deferred dropdown icon refs now that assets are ready
+	for _, img in ipairs(LG_ARROW_REFS) do
+		if img and img.Parent then img.Image = LG_ICON_ARROW end
+	end
+	for _, entry in ipairs(LG_CHECK_REFS) do
+		if entry.img and entry.img.Parent and entry.selected then
+			entry.img.Image = LG_ICON_CHECK
+		end
+	end
 end
+
+-- Registry of ImageLabels that need arrow/check icons assigned once assets load.
+-- buildDropdown() populates these; loadDIIcons flushes them after download.
+local LG_ARROW_REFS = {}  -- list of ImageLabel instances (chevrons)
+local LG_CHECK_REFS = {}  -- list of {img=ImageLabel, selected=bool} entries
 
 -- Load icons asynchronously so they don't block the UI
 task.spawn(loadDIIcons)
@@ -2160,6 +2174,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 	chevron.Position=UDim2.new(1,-8,0.5,0); chevron.BackgroundTransparency=1
 	chevron.Image=LG_ICON_ARROW
 	chevron.ZIndex=17; chevron.Parent=pill
+	table.insert(LG_ARROW_REFS, chevron)
 
 	-- Dropdown panel (floats in ScreenGui, solid dark — same style as search results)
 	local panel=Instance.new("Frame")
@@ -2192,6 +2207,8 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		checkLbl.BackgroundTransparency=1
 		checkLbl.Image=i==selectedIdx and LG_ICON_CHECK or ""
 		checkLbl.ZIndex=53; checkLbl.Parent=ob
+		local checkRef = {img=checkLbl, selected=(i==selectedIdx)}
+		table.insert(LG_CHECK_REFS, checkRef)
 		optionBtns[i]={btn=ob,lbl=ol,check=checkLbl}
 		ob.MouseEnter:Connect(function() tween(ob,0.08,{BackgroundTransparency=0.55}) end)
 		ob.MouseLeave:Connect(function() tween(ob,0.08,{BackgroundTransparency=1}) end)
