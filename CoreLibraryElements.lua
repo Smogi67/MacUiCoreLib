@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 113
+local LG_VERSION = 115
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1442,21 +1442,13 @@ local function diDismiss()
 	end)
 end
 
--- Click: smoothly fade contents then collapse to dot
+-- Click: use the exact same animation as auto-dismiss
 diHitbox.MouseButton1Click:Connect(function()
 	if activeDragLabel ~= nil then return end
 	if DI_SHOWING then
 		diCancelAll()
 		DI_QUEUE = {}
-		DI_SHOWING = false
-		diIsCollapsing = true
-		TweenService:Create(diContent,
-			TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{GroupTransparency = 1}):Play()
-		task.delay(0.1, function()
-			diClearContent()
-			diCollapseToDot(diHide)
-		end)
+		diDismiss()
 	end
 end)
 
