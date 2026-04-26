@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 119
+local LG_VERSION = 121
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -2139,9 +2139,10 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 	pillLbl.BackgroundTransparency=1; pillLbl.Text=options[selectedIdx]; pillLbl.Font=Enum.Font.GothamMedium
 	pillLbl.TextSize=13; pillLbl.TextColor3=T.textPrimary; pillLbl.TextXAlignment=Enum.TextXAlignment.Left
 	pillLbl.ZIndex=17; pillLbl.Parent=pill
-	local chevron=Instance.new("TextLabel"); chevron.Size=UDim2.fromOffset(20,28); chevron.AnchorPoint=Vector2.new(1,0.5)
-	chevron.Position=UDim2.new(1,-4,0.5,0); chevron.BackgroundTransparency=1; chevron.Text="v"
-	chevron.Font=Enum.Font.GothamBold; chevron.TextSize=12; chevron.TextColor3=T.textSecond; chevron.ZIndex=17; chevron.Parent=pill
+	local chevron=Instance.new("ImageLabel"); chevron.Size=UDim2.fromOffset(16,16); chevron.AnchorPoint=Vector2.new(1,0.5)
+	chevron.Position=UDim2.new(1,-8,0.5,0); chevron.BackgroundTransparency=1
+	chevron.Image="https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/7fc55759e7b2b44f10db31b92ddfaaeb7155f576/Icons/Arrow%20dropdown%20menu.png"
+	chevron.ZIndex=17; chevron.Parent=pill
 
 	-- Dropdown panel (floats in ScreenGui, solid dark — same style as search results)
 	local panel=Instance.new("Frame")
@@ -2169,10 +2170,10 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		ol.BackgroundTransparency=1; ol.Text=opt; ol.Font=Enum.Font.Gotham; ol.TextSize=13
 		ol.TextColor3=i==selectedIdx and T.textPrimary or T.textSecond
 		ol.TextXAlignment=Enum.TextXAlignment.Left; ol.ZIndex=53; ol.Parent=ob
-		local checkLbl=Instance.new("TextLabel"); checkLbl.Size=UDim2.fromOffset(18,34)
+		local checkLbl=Instance.new("ImageLabel"); checkLbl.Size=UDim2.fromOffset(16,16)
 		checkLbl.AnchorPoint=Vector2.new(1,0.5); checkLbl.Position=UDim2.new(1,-8,0.5,0)
-		checkLbl.BackgroundTransparency=1; checkLbl.Text=i==selectedIdx and "✓" or ""
-		checkLbl.Font=Enum.Font.GothamBold; checkLbl.TextSize=12; checkLbl.TextColor3=T.blue
+		checkLbl.BackgroundTransparency=1
+		checkLbl.Image=i==selectedIdx and "https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons/Checked.png" or ""
 		checkLbl.ZIndex=53; checkLbl.Parent=ob
 		optionBtns[i]={btn=ob,lbl=ol,check=checkLbl}
 		ob.MouseEnter:Connect(function() tween(ob,0.08,{BackgroundTransparency=0.55}) end)
@@ -2181,10 +2182,10 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 			-- deselect old
 			if optionBtns[selectedIdx] then
 				optionBtns[selectedIdx].lbl.TextColor3=T.textSecond
-				optionBtns[selectedIdx].check.Text=""
+				optionBtns[selectedIdx].check.Image=""
 			end
 			selectedIdx=i; pillLbl.Text=opt
-			ol.TextColor3=T.textPrimary; checkLbl.Text="✓"
+			ol.TextColor3=T.textPrimary; checkLbl.Image="https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons/Checked.png"
 			-- Close FIRST so that even if the user callback errors, the panel
 			-- still closes cleanly. Wrap callback in pcall for the same reason.
 			closePanel()
@@ -2314,13 +2315,13 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		SetValue=function(_,idx)
 			if optionBtns[selectedIdx] then
 				optionBtns[selectedIdx].lbl.TextColor3=T.textSecond
-				optionBtns[selectedIdx].check.Text=""
+				optionBtns[selectedIdx].check.Image=""
 			end
 			selectedIdx=math.clamp(idx,1,#options)
 			pillLbl.Text=options[selectedIdx]
 			if optionBtns[selectedIdx] then
 				optionBtns[selectedIdx].lbl.TextColor3=T.textPrimary
-				optionBtns[selectedIdx].check.Text="✓"
+				optionBtns[selectedIdx].check.Image="https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons/Checked.png"
 			end
 		end
 	}
