@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 118
+local LG_VERSION = 119
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1424,9 +1424,9 @@ local function diDismiss()
 	local dismissingLabel = diCurrentLabel
 	-- Smoothly fade content out before collapsing
 	TweenService:Create(diContent,
-		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{GroupTransparency = 1}):Play()
-	diCollapseThread = task.delay(0.1, function()
+	diCollapseThread = task.delay(0.05, function()
 		diCollapseThread = nil
 		if activeDragLabel ~= nil then
 			diContent.GroupTransparency = 0
