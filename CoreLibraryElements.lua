@@ -440,7 +440,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 122
+local LG_VERSION = 123
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -2209,7 +2209,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		checkLbl.ZIndex=53; checkLbl.Parent=ob
 		local checkRef = {img=checkLbl, selected=(i==selectedIdx)}
 		table.insert(LG_CHECK_REFS, checkRef)
-		optionBtns[i]={btn=ob,lbl=ol,check=checkLbl}
+		optionBtns[i]={btn=ob,lbl=ol,check=checkLbl,ref=checkRef}
 		ob.MouseEnter:Connect(function() tween(ob,0.08,{BackgroundTransparency=0.55}) end)
 		ob.MouseLeave:Connect(function() tween(ob,0.08,{BackgroundTransparency=1}) end)
 		ob.MouseButton1Click:Connect(function()
@@ -2217,9 +2217,11 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 			if optionBtns[selectedIdx] then
 				optionBtns[selectedIdx].lbl.TextColor3=T.textSecond
 				optionBtns[selectedIdx].check.Image=""
+				if optionBtns[selectedIdx].ref then optionBtns[selectedIdx].ref.selected=false end
 			end
 			selectedIdx=i; pillLbl.Text=opt
 			ol.TextColor3=T.textPrimary; checkLbl.Image=LG_ICON_CHECK
+			checkRef.selected=true
 			-- Close FIRST so that even if the user callback errors, the panel
 			-- still closes cleanly. Wrap callback in pcall for the same reason.
 			closePanel()
