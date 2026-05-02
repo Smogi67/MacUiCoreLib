@@ -331,6 +331,36 @@
   Shorthand for a yellow warning notification.
 
   ─────────────────────────────────────────────────────────
+  LiquidGlass:Notification(opts)
+  ─────────────────────────────────────────────────────────
+  iOS-style notification card that slides down from the top
+  of the screen. Always uses the liquid glass look regardless
+  of the current theme (glass or solid).
+
+  Behaviour:
+    • Slides in from above with a spring easing
+    • Up to 2 cards can be stacked at once
+    • A 3rd card pushes the oldest off the top automatically
+    • Cards auto-dismiss after `duration` seconds
+    • Swipe left or right ≥ 60 px to manually dismiss early;
+      the card flies off in the drag direction
+    • Short swipes snap back with a bounce
+
+  opts fields:
+    title     string   Bold header line
+    message   string?  Secondary body text (optional)
+    duration  number?  Seconds before auto-dismiss   default 4
+
+  Examples:
+    LiquidGlass:Notification({ title = "Saved" })
+    LiquidGlass:Notification({ title = "Download complete", message = "Icons cached successfully." })
+    LiquidGlass:Notification({ title = "Warning", message = "High memory usage.", duration = 6 })
+
+  Note: icon downloads fire Notification automatically — a card appears
+  whenever icons are freshly fetched from GitHub (silent on cache
+  hits, since no download actually occurred).
+
+  ─────────────────────────────────────────────────────────
   LiquidGlass:Open()  /  LiquidGlass:Close()
   ─────────────────────────────────────────────────────────
   Show or hide the window with animation.
@@ -418,6 +448,15 @@
   -- local current = accentPicker:GetValue()
   -- accentPicker:SetValue(Color3.fromRGB(255, 80, 120))
 
+  -- iOS-style Notification cards (glass, slide from top)
+  local notifSection = graphicsTab:AddSection("Notifications")
+  notifSection:AddButton("Simple notification", "Show", function()
+      LiquidGlass:Notification({ title = "Saved", message = "Settings saved successfully." })
+  end)
+  notifSection:AddButton("Custom duration", "Show", function()
+      LiquidGlass:Notification({ title = "Warning", message = "High memory usage detected.", duration = 6 })
+  end)
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ]]
 
@@ -440,7 +479,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 124
+local LG_VERSION = 125
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -648,6 +687,7 @@ local Blur = Instance.new("BlurEffect"); Blur.Name="LGBlur"; Blur.Size=0; Blur.P
 local SRF
 local SearchBox
 local PromptBlocker  -- created at line ~2774, referenced inside buildColorPicker closures
+local showNotif      -- defined near bottom; forward-decl so loadDIIcons can call it
 
 local Overlay = Instance.new("Frame")
 Overlay.Size=UDim2.fromScale(1,1); Overlay.BackgroundColor3=Color3.fromRGB(8,10,18)
@@ -1215,6 +1255,9 @@ local function loadDIIcons()
 		end)
 	end
 
+	local downloadCount = 0
+	local failCount = 0
+
 	for key, fileName in pairs(ICON_MAP) do
 		local localPath = ICON_DIR .. "/" .. fileName
 
@@ -1235,9 +1278,11 @@ local function loadDIIcons()
 				pcall(function()
 					writefile(localPath, data)
 					assetId = getcustomasset(localPath)
+					downloadCount = downloadCount + 1
 				end)
 			else
 				warn("[LiquidGlass] Failed to download icon: " .. fileName)
+				failCount = failCount + 1
 			end
 		end
 
@@ -1259,6 +1304,21 @@ local function loadDIIcons()
 		if entry.img and entry.img.Parent and entry.selected then
 			entry.img.Image = LG_ICON_CHECK
 		end
+	end
+	-- Notification cards for download results (silent on cache hits)
+	if downloadCount > 0 then
+		showNotif({
+			title   = "Icons Downloaded",
+			message = downloadCount .. " icon" .. (downloadCount == 1 and "" or "s") .. " cached successfully.",
+			duration = 4,
+		})
+	end
+	if failCount > 0 then
+		showNotif({
+			title   = "Icon Download Failed",
+			message = failCount .. " icon" .. (failCount == 1 and "" or "s") .. " could not be fetched.",
+			duration = 5,
+		})
 	end
 end
 
@@ -4574,6 +4634,16 @@ function LiquidGlass:NotifySlider(label, pct)
 	diTrackSlider(label, pct, "slider", math.round(pct * 100) .. "%")
 end
 
+-- ── Notification ─────────────────────────────────────────────────────
+-- iOS-style notification card that slides down from the top.
+-- Always glass, max 2 stacked. Swipe to dismiss early.
+--   opts.title    string   Bold header line
+--   opts.message  string?  Body text (optional)
+--   opts.duration number?  Auto-dismiss delay in seconds (default 4)
+function LiquidGlass:Notification(opts)
+	showNotif(opts)
+end
+
 -- ── ShowMultiPrompt ──────────────────────────────────────────
 -- opts: { title, body, buttons = { {text, color="blue"|"grey", callback?}, ... } }
 -- A Cancel button is always added automatically at the bottom.
@@ -4803,10 +4873,201 @@ local function doIntro()
 end
 
 -- ============================================================
--- BOOT — schedules the intro animation. Because task.defer waits
--- until the current synchronous chunk yields, UserConfig's
--- :SetConfig and :AddTab calls (which run synchronously after
--- loadstring(...)() returns) all complete BEFORE doIntro fires.
+-- iOS-STYLE NOTIFICATION SYSTEM
+-- ============================================================
+-- Cards slide down from the top of the screen, always glass.
+-- Max 2 visible; a 3rd evicts the oldest. Swipe to dismiss.
+-- Public API: LiquidGlass:Notification({ title, message, duration })
+-- ============================================================
+
+local NOTIF_HOLD      = 4      -- seconds before auto-dismiss
+local NOTIF_CARD_H    = 64     -- card height px
+local NOTIF_CARD_W    = 320    -- card width px
+local NOTIF_TOP_PAD   = 14     -- gap from screen top
+local NOTIF_GAP       = 10     -- vertical gap between stacked cards
+local NOTIF_MAX       = 2      -- max cards visible simultaneously
+local NOTIF_ANIM_IN   = 0.38   -- spring-in duration
+local NOTIF_ANIM_OUT  = 0.28   -- slide-out duration
+local NOTIF_SWIPE_THR = 60     -- px horizontal drag to dismiss
+local NOTIF_RADIUS    = 22     -- corner radius
+
+local NotifContainer = Instance.new("Frame")
+NotifContainer.Name = "LGNotifContainer"
+NotifContainer.AnchorPoint = Vector2.new(0.5, 0)
+NotifContainer.Position    = UDim2.new(0.5, 0, 0, NOTIF_TOP_PAD)
+NotifContainer.Size        = UDim2.fromOffset(NOTIF_CARD_W, 400)
+NotifContainer.BackgroundTransparency = 1
+NotifContainer.BorderSizePixel = 0
+NotifContainer.ClipsDescendants = false
+NotifContainer.ZIndex = 200
+NotifContainer.Parent = ScreenGui
+
+local notifStack = {}  -- { frame, dismissThread, yTarget }
+
+local function notifYFor(idx)
+	return idx * (NOTIF_CARD_H + NOTIF_GAP)
+end
+
+local function restack()
+	for i, rec in ipairs(notifStack) do
+		local targetY = notifYFor(i - 1)
+		rec.yTarget = targetY
+		TweenService:Create(rec.frame,
+			TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+			{ Position = UDim2.fromOffset(0, targetY) }):Play()
+	end
+end
+
+local function dismissCard(rec, instant)
+	if rec.dismissThread then
+		task.cancel(rec.dismissThread)
+		rec.dismissThread = nil
+	end
+	for i, r in ipairs(notifStack) do
+		if r == rec then table.remove(notifStack, i); break end
+	end
+	local dur = instant and 0.01 or NOTIF_ANIM_OUT
+	TweenService:Create(rec.frame,
+		TweenInfo.new(dur, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+		{ Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20)) }):Play()
+	TweenService:Create(rec.frame,
+		TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+		{ GroupTransparency = 1 }):Play()
+	task.delay(dur + 0.05, function()
+		if rec.frame and rec.frame.Parent then rec.frame:Destroy() end
+	end)
+	restack()
+end
+
+showNotif = function(opts)
+	opts = opts or {}
+	local title    = tostring(opts.title   or "Notification")
+	local message  = tostring(opts.message or "")
+	local duration = tonumber(opts.duration) or NOTIF_HOLD
+
+	if #notifStack >= NOTIF_MAX then
+		dismissCard(notifStack[1], false)
+		task.wait()
+	end
+
+	local card = Instance.new("CanvasGroup")
+	card.Name = "LGNotif"
+	card.Size = UDim2.fromOffset(NOTIF_CARD_W, NOTIF_CARD_H)
+	card.AnchorPoint = Vector2.new(0, 0)
+	local targetY = notifYFor(#notifStack)
+	card.Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20))
+	card.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+	card.BackgroundTransparency = 0.25
+	card.BorderSizePixel = 0
+	card.GroupTransparency = 0
+	card.ZIndex = 200
+	card.ClipsDescendants = false
+	card.Parent = NotifContainer
+
+	liquidGlass(card, { radius = NOTIF_RADIUS, strokeT = 0.45 })
+
+	local iconDot = Instance.new("Frame")
+	iconDot.Size = UDim2.fromOffset(8, 8)
+	iconDot.AnchorPoint = Vector2.new(0, 0.5)
+	iconDot.Position = UDim2.new(0, 16, 0, 22)
+	iconDot.BackgroundColor3 = T.blue
+	iconDot.BorderSizePixel = 0
+	iconDot.ZIndex = 201
+	iconDot.Parent = card
+	local ic = Instance.new("UICorner"); ic.CornerRadius = UDim.new(1,0); ic.Parent = iconDot
+
+	local titleLbl = Instance.new("TextLabel")
+	titleLbl.Size = UDim2.new(1, -52, 0, 20)
+	titleLbl.Position = UDim2.fromOffset(32, 12)
+	titleLbl.BackgroundTransparency = 1
+	titleLbl.Text = title
+	titleLbl.Font = Enum.Font.GothamBold
+	titleLbl.TextSize = 13
+	titleLbl.TextColor3 = T.textPrimary
+	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+	titleLbl.TextTruncate = Enum.TextTruncate.AtEnd
+	titleLbl.ZIndex = 201
+	titleLbl.Parent = card
+
+	if message ~= "" then
+		local msgLbl = Instance.new("TextLabel")
+		msgLbl.Size = UDim2.new(1, -52, 0, 28)
+		msgLbl.Position = UDim2.fromOffset(32, 32)
+		msgLbl.BackgroundTransparency = 1
+		msgLbl.Text = message
+		msgLbl.Font = Enum.Font.Gotham
+		msgLbl.TextSize = 12
+		msgLbl.TextColor3 = T.textSecond
+		msgLbl.TextXAlignment = Enum.TextXAlignment.Left
+		msgLbl.TextWrapped = true
+		msgLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		msgLbl.ZIndex = 201
+		msgLbl.Parent = card
+	end
+
+	local rec = { frame = card, dismissThread = nil, yTarget = targetY }
+	table.insert(notifStack, rec)
+
+	TweenService:Create(card,
+		TweenInfo.new(NOTIF_ANIM_IN, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Position = UDim2.fromOffset(0, targetY) }):Play()
+
+	rec.dismissThread = task.delay(duration, function()
+		dismissCard(rec, false)
+	end)
+
+	-- Swipe to dismiss
+	local swipeStartX, swiping = nil, false
+	card.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch
+		or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			swipeStartX = input.Position.X
+			swiping = true
+		end
+	end)
+	card.InputChanged:Connect(function(input)
+		if not swiping then return end
+		if input.UserInputType == Enum.UserInputType.Touch
+		or input.UserInputType == Enum.UserInputType.MouseMovement then
+			local dx = input.Position.X - swipeStartX
+			card.Position = UDim2.fromOffset(dx, rec.yTarget)
+			card.GroupTransparency = math.clamp(math.abs(dx) / (NOTIF_SWIPE_THR * 2), 0, 0.6)
+		end
+	end)
+	card.InputEnded:Connect(function(input)
+		if not swiping then return end
+		if input.UserInputType == Enum.UserInputType.Touch
+		or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			swiping = false
+			local dx = card.Position.X.Offset
+			if math.abs(dx) >= NOTIF_SWIPE_THR then
+				local flyX = dx > 0 and (NOTIF_CARD_W + 40) or -(NOTIF_CARD_W + 40)
+				if rec.dismissThread then task.cancel(rec.dismissThread); rec.dismissThread = nil end
+				for i, r in ipairs(notifStack) do
+					if r == rec then table.remove(notifStack, i); break end
+				end
+				TweenService:Create(card,
+					TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+					{ Position = UDim2.fromOffset(flyX, rec.yTarget) }):Play()
+				TweenService:Create(card,
+					TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ GroupTransparency = 1 }):Play()
+				task.delay(NOTIF_ANIM_OUT + 0.05, function()
+					if card and card.Parent then card:Destroy() end
+				end)
+				restack()
+			else
+				card.GroupTransparency = 0
+				TweenService:Create(card,
+					TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+					{ Position = UDim2.fromOffset(0, rec.yTarget) }):Play()
+			end
+		end
+	end)
+end
+
+-- ============================================================
+-- BOOT
 -- ============================================================
 task.defer(doIntro)
 print("[CoreLibraryElements] v" .. LG_VERSION .. " loaded ✓")
