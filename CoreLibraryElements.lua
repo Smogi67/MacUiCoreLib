@@ -4956,8 +4956,8 @@ showNotif = function(opts)
 	card.AnchorPoint = Vector2.new(0, 0)
 	local targetY = notifYFor(#notifStack)
 	card.Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20))
-	card.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
-	card.BackgroundTransparency = 0.08
+	card.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+	card.BackgroundTransparency = 0
 	card.BorderSizePixel = 0
 	card.GroupTransparency = 0
 	card.ZIndex = 200
@@ -5016,56 +5016,85 @@ showNotif = function(opts)
 		dismissCard(rec, false)
 	end)
 
-	-- Swipe up to dismiss
-	local swipeStartY, swiping = nil, false
+	-- Swipe up to dismiss — global tracking via UserInputService for fluidity.
+	-- Dismisses on either: distance > threshold, OR upward velocity flick.
+	local swipeStartY, swipeStartTime, lastY, lastTime
+	local swiping = false
+	local moveConn, endConn
+
 	card.InputBegan:Connect(function(input)
+		if swiping then return end
 		if input.UserInputType == Enum.UserInputType.Touch
 		or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			swipeStartY = input.Position.Y
-			swiping = true
-		end
-	end)
-	card.InputChanged:Connect(function(input)
-		if not swiping then return end
-		if input.UserInputType == Enum.UserInputType.Touch
-		or input.UserInputType == Enum.UserInputType.MouseMovement then
-			local dy = input.Position.Y - swipeStartY
-			-- Only track upward movement (negative dy)
-			if dy < 0 then
-				card.Position = UDim2.fromOffset(0, rec.yTarget + dy)
-				card.GroupTransparency = math.clamp(math.abs(dy) / (NOTIF_SWIPE_THR * 2), 0, 0.8)
-			end
-		end
-	end)
-	card.InputEnded:Connect(function(input)
-		if not swiping then return end
-		if input.UserInputType == Enum.UserInputType.Touch
-		or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			swiping = false
-			local dy = card.Position.Y.Offset - rec.yTarget
-			if dy < -NOTIF_SWIPE_THR then
-				-- Committed upward swipe — fly off the top
-				if rec.dismissThread then task.cancel(rec.dismissThread); rec.dismissThread = nil end
-				for i, r in ipairs(notifStack) do
-					if r == rec then table.remove(notifStack, i); break end
+			swipeStartY    = input.Position.Y
+			swipeStartTime = os.clock()
+			lastY          = swipeStartY
+			lastTime       = swipeStartTime
+			swiping        = true
+
+			-- Track movement globally so the card stays glued to the finger
+			-- even if it drifts off the card's hit area
+			moveConn = UserInputService.InputChanged:Connect(function(moveInput)
+				if not swiping then return end
+				if moveInput.UserInputType ~= Enum.UserInputType.Touch
+				and moveInput.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+				local now = os.clock()
+				lastY    = moveInput.Position.Y
+				lastTime = now
+				local dy = moveInput.Position.Y - swipeStartY
+				-- Allow tiny downward movement (rubber-band feel) but always update
+				if dy < 0 then
+					card.Position = UDim2.fromOffset(0, rec.yTarget + dy)
+					card.GroupTransparency = math.clamp(math.abs(dy) / 50, 0, 0.7)
+				else
+					-- Soft rubber-band downward: 1/3 movement, capped
+					local pull = math.min(dy * 0.33, 8)
+					card.Position = UDim2.fromOffset(0, rec.yTarget + pull)
+					card.GroupTransparency = 0
 				end
-				TweenService:Create(card,
-					TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
-					{ Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 40)) }):Play()
-				TweenService:Create(card,
-					TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-					{ GroupTransparency = 1 }):Play()
-				task.delay(NOTIF_ANIM_OUT + 0.05, function()
-					if card and card.Parent then card:Destroy() end
-				end)
-				restack()
-			else
-				-- Snap back to resting position
-				card.GroupTransparency = 0
-				TweenService:Create(card,
-					TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-					{ Position = UDim2.fromOffset(0, rec.yTarget) }):Play()
-			end
+			end)
+
+			endConn = UserInputService.InputEnded:Connect(function(endInput)
+				if not swiping then return end
+				if endInput.UserInputType ~= Enum.UserInputType.Touch
+				and endInput.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+				swiping = false
+				if moveConn then moveConn:Disconnect(); moveConn = nil end
+				if endConn  then endConn:Disconnect();  endConn  = nil end
+
+				local dy = lastY - swipeStartY
+				local dt = math.max(os.clock() - lastTime, 0.001)
+				-- Velocity in px/sec (negative = upward)
+				local velocity = dy / math.max(os.clock() - swipeStartTime, 0.001)
+
+				-- Dismiss if dragged > 25px up OR flicked upward fast
+				local shouldDismiss = (dy < -25) or (velocity < -400)
+				if shouldDismiss then
+					if rec.dismissThread then task.cancel(rec.dismissThread); rec.dismissThread = nil end
+					for i, r in ipairs(notifStack) do
+						if r == rec then table.remove(notifStack, i); break end
+					end
+					TweenService:Create(card,
+						TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+						{ Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 40)) }):Play()
+					TweenService:Create(card,
+						TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+						{ GroupTransparency = 1 }):Play()
+					task.delay(0.27, function()
+						if card and card.Parent then card:Destroy() end
+					end)
+					restack()
+				else
+					-- Snap back
+					TweenService:Create(card,
+						TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+						{ Position = UDim2.fromOffset(0, rec.yTarget) }):Play()
+					TweenService:Create(card,
+						TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+						{ GroupTransparency = 0 }):Play()
+				end
+			end)
 		end
 	end)
 end
