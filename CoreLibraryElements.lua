@@ -479,7 +479,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 125
+local LG_VERSION = 126
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -4881,14 +4881,14 @@ end
 -- ============================================================
 
 local NOTIF_HOLD      = 4      -- seconds before auto-dismiss
-local NOTIF_CARD_H    = 64     -- card height px
+local NOTIF_CARD_H    = 50     -- card height px
 local NOTIF_CARD_W    = 320    -- card width px
-local NOTIF_TOP_PAD   = 14     -- gap from screen top
-local NOTIF_GAP       = 10     -- vertical gap between stacked cards
+local NOTIF_TOP_PAD   = 64     -- below the Dynamic Island (DI bottom ~55px + gap)
+local NOTIF_GAP       = 8      -- vertical gap between stacked cards
 local NOTIF_MAX       = 2      -- max cards visible simultaneously
 local NOTIF_ANIM_IN   = 0.38   -- spring-in duration
 local NOTIF_ANIM_OUT  = 0.28   -- slide-out duration
-local NOTIF_SWIPE_THR = 60     -- px horizontal drag to dismiss
+local NOTIF_SWIPE_THR = 40     -- px upward drag to dismiss
 local NOTIF_RADIUS    = 22     -- corner radius
 
 local NotifContainer = Instance.new("Frame")
@@ -4957,19 +4957,19 @@ showNotif = function(opts)
 	local targetY = notifYFor(#notifStack)
 	card.Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20))
 	card.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
-	card.BackgroundTransparency = 0.25
+	card.BackgroundTransparency = 0.08
 	card.BorderSizePixel = 0
 	card.GroupTransparency = 0
 	card.ZIndex = 200
 	card.ClipsDescendants = false
 	card.Parent = NotifContainer
 
-	liquidGlass(card, { radius = NOTIF_RADIUS, strokeT = 0.45 })
+	liquidGlass(card, { radius = NOTIF_RADIUS, strokeT = 0.3 })
 
 	local iconDot = Instance.new("Frame")
 	iconDot.Size = UDim2.fromOffset(8, 8)
 	iconDot.AnchorPoint = Vector2.new(0, 0.5)
-	iconDot.Position = UDim2.new(0, 16, 0, 22)
+	iconDot.Position = UDim2.new(0, 16, 0.5, 0)
 	iconDot.BackgroundColor3 = T.blue
 	iconDot.BorderSizePixel = 0
 	iconDot.ZIndex = 201
@@ -4977,8 +4977,8 @@ showNotif = function(opts)
 	local ic = Instance.new("UICorner"); ic.CornerRadius = UDim.new(1,0); ic.Parent = iconDot
 
 	local titleLbl = Instance.new("TextLabel")
-	titleLbl.Size = UDim2.new(1, -52, 0, 20)
-	titleLbl.Position = UDim2.fromOffset(32, 12)
+	titleLbl.Size = UDim2.new(1, -52, 0, 18)
+	titleLbl.Position = UDim2.fromOffset(32, message ~= "" and 8 or 16)
 	titleLbl.BackgroundTransparency = 1
 	titleLbl.Text = title
 	titleLbl.Font = Enum.Font.GothamBold
@@ -4991,15 +4991,15 @@ showNotif = function(opts)
 
 	if message ~= "" then
 		local msgLbl = Instance.new("TextLabel")
-		msgLbl.Size = UDim2.new(1, -52, 0, 28)
-		msgLbl.Position = UDim2.fromOffset(32, 32)
+		msgLbl.Size = UDim2.new(1, -52, 0, 18)
+		msgLbl.Position = UDim2.fromOffset(32, 27)
 		msgLbl.BackgroundTransparency = 1
 		msgLbl.Text = message
 		msgLbl.Font = Enum.Font.Gotham
 		msgLbl.TextSize = 12
 		msgLbl.TextColor3 = T.textSecond
 		msgLbl.TextXAlignment = Enum.TextXAlignment.Left
-		msgLbl.TextWrapped = true
+		msgLbl.TextWrapped = false
 		msgLbl.TextTruncate = Enum.TextTruncate.AtEnd
 		msgLbl.ZIndex = 201
 		msgLbl.Parent = card
@@ -5016,12 +5016,12 @@ showNotif = function(opts)
 		dismissCard(rec, false)
 	end)
 
-	-- Swipe to dismiss
-	local swipeStartX, swiping = nil, false
+	-- Swipe up to dismiss
+	local swipeStartY, swiping = nil, false
 	card.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.Touch
 		or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			swipeStartX = input.Position.X
+			swipeStartY = input.Position.Y
 			swiping = true
 		end
 	end)
@@ -5029,9 +5029,12 @@ showNotif = function(opts)
 		if not swiping then return end
 		if input.UserInputType == Enum.UserInputType.Touch
 		or input.UserInputType == Enum.UserInputType.MouseMovement then
-			local dx = input.Position.X - swipeStartX
-			card.Position = UDim2.fromOffset(dx, rec.yTarget)
-			card.GroupTransparency = math.clamp(math.abs(dx) / (NOTIF_SWIPE_THR * 2), 0, 0.6)
+			local dy = input.Position.Y - swipeStartY
+			-- Only track upward movement (negative dy)
+			if dy < 0 then
+				card.Position = UDim2.fromOffset(0, rec.yTarget + dy)
+				card.GroupTransparency = math.clamp(math.abs(dy) / (NOTIF_SWIPE_THR * 2), 0, 0.8)
+			end
 		end
 	end)
 	card.InputEnded:Connect(function(input)
@@ -5039,16 +5042,16 @@ showNotif = function(opts)
 		if input.UserInputType == Enum.UserInputType.Touch
 		or input.UserInputType == Enum.UserInputType.MouseButton1 then
 			swiping = false
-			local dx = card.Position.X.Offset
-			if math.abs(dx) >= NOTIF_SWIPE_THR then
-				local flyX = dx > 0 and (NOTIF_CARD_W + 40) or -(NOTIF_CARD_W + 40)
+			local dy = card.Position.Y.Offset - rec.yTarget
+			if dy < -NOTIF_SWIPE_THR then
+				-- Committed upward swipe — fly off the top
 				if rec.dismissThread then task.cancel(rec.dismissThread); rec.dismissThread = nil end
 				for i, r in ipairs(notifStack) do
 					if r == rec then table.remove(notifStack, i); break end
 				end
 				TweenService:Create(card,
 					TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
-					{ Position = UDim2.fromOffset(flyX, rec.yTarget) }):Play()
+					{ Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 40)) }):Play()
 				TweenService:Create(card,
 					TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 					{ GroupTransparency = 1 }):Play()
@@ -5057,6 +5060,7 @@ showNotif = function(opts)
 				end)
 				restack()
 			else
+				-- Snap back to resting position
 				card.GroupTransparency = 0
 				TweenService:Create(card,
 					TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
