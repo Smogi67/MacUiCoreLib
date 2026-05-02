@@ -479,7 +479,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 126
+local LG_VERSION = 128
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -4899,7 +4899,7 @@ NotifContainer.Size        = UDim2.fromOffset(NOTIF_CARD_W, 400)
 NotifContainer.BackgroundTransparency = 1
 NotifContainer.BorderSizePixel = 0
 NotifContainer.ClipsDescendants = false
-NotifContainer.ZIndex = 200
+NotifContainer.ZIndex = 50
 NotifContainer.Parent = ScreenGui
 
 local notifStack = {}  -- { frame, dismissThread, yTarget }
@@ -4956,11 +4956,11 @@ showNotif = function(opts)
 	card.AnchorPoint = Vector2.new(0, 0)
 	local targetY = notifYFor(#notifStack)
 	card.Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20))
-	card.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+	card.BackgroundColor3 = Color3.fromRGB(58, 58, 68)
 	card.BackgroundTransparency = 0
 	card.BorderSizePixel = 0
 	card.GroupTransparency = 0
-	card.ZIndex = 200
+	card.ZIndex = 50
 	card.ClipsDescendants = false
 	card.Parent = NotifContainer
 
@@ -4972,7 +4972,7 @@ showNotif = function(opts)
 	iconDot.Position = UDim2.new(0, 16, 0.5, 0)
 	iconDot.BackgroundColor3 = T.blue
 	iconDot.BorderSizePixel = 0
-	iconDot.ZIndex = 201
+	iconDot.ZIndex = 51
 	iconDot.Parent = card
 	local ic = Instance.new("UICorner"); ic.CornerRadius = UDim.new(1,0); ic.Parent = iconDot
 
@@ -4986,7 +4986,7 @@ showNotif = function(opts)
 	titleLbl.TextColor3 = T.textPrimary
 	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 	titleLbl.TextTruncate = Enum.TextTruncate.AtEnd
-	titleLbl.ZIndex = 201
+	titleLbl.ZIndex = 51
 	titleLbl.Parent = card
 
 	if message ~= "" then
@@ -5001,7 +5001,7 @@ showNotif = function(opts)
 		msgLbl.TextXAlignment = Enum.TextXAlignment.Left
 		msgLbl.TextWrapped = false
 		msgLbl.TextTruncate = Enum.TextTruncate.AtEnd
-		msgLbl.ZIndex = 201
+		msgLbl.ZIndex = 51
 		msgLbl.Parent = card
 	end
 
@@ -5013,89 +5013,95 @@ showNotif = function(opts)
 		{ Position = UDim2.fromOffset(0, targetY) }):Play()
 
 	rec.dismissThread = task.delay(duration, function()
+		-- Clear the ref BEFORE calling dismissCard so it doesn't try
+		-- to task.cancel the currently-running thread (which would
+		-- abort dismissCard mid-execution and leave the card on screen).
+		rec.dismissThread = nil
 		dismissCard(rec, false)
 	end)
 
-	-- Swipe up to dismiss — global tracking via UserInputService for fluidity.
-	-- Dismisses on either: distance > threshold, OR upward velocity flick.
-	local swipeStartY, swipeStartTime, lastY, lastTime
-	local swiping = false
+	-- Swipe up to dismiss — global tracking via UserInputService.
+	-- Dismisses on: distance > 20px up OR upward velocity flick.
+	-- Uses recent-window velocity (last ~100ms) for natural iOS feel.
+	local swipe = { active = false, startY = 0, lastY = 0, lastT = 0, samples = {} }
 	local moveConn, endConn
 
+	local function cleanupSwipe()
+		swipe.active = false
+		if moveConn then moveConn:Disconnect(); moveConn = nil end
+		if endConn  then endConn:Disconnect();  endConn  = nil end
+	end
+
 	card.InputBegan:Connect(function(input)
-		if swiping then return end
-		if input.UserInputType == Enum.UserInputType.Touch
-		or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			swipeStartY    = input.Position.Y
-			swipeStartTime = os.clock()
-			lastY          = swipeStartY
-			lastTime       = swipeStartTime
-			swiping        = true
+		if swipe.active then return end
+		if input.UserInputType ~= Enum.UserInputType.Touch
+		and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
-			-- Track movement globally so the card stays glued to the finger
-			-- even if it drifts off the card's hit area
-			moveConn = UserInputService.InputChanged:Connect(function(moveInput)
-				if not swiping then return end
-				if moveInput.UserInputType ~= Enum.UserInputType.Touch
-				and moveInput.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-				local now = os.clock()
-				lastY    = moveInput.Position.Y
-				lastTime = now
-				local dy = moveInput.Position.Y - swipeStartY
-				-- Allow tiny downward movement (rubber-band feel) but always update
-				if dy < 0 then
-					card.Position = UDim2.fromOffset(0, rec.yTarget + dy)
-					card.GroupTransparency = math.clamp(math.abs(dy) / 50, 0, 0.7)
-				else
-					-- Soft rubber-band downward: 1/3 movement, capped
-					local pull = math.min(dy * 0.33, 8)
-					card.Position = UDim2.fromOffset(0, rec.yTarget + pull)
-					card.GroupTransparency = 0
+		swipe.active  = true
+		swipe.startY  = input.Position.Y
+		swipe.lastY   = input.Position.Y
+		swipe.lastT   = os.clock()
+		swipe.samples = { { y = input.Position.Y, t = os.clock() } }
+
+		moveConn = UserInputService.InputChanged:Connect(function(mv)
+			if not swipe.active then return end
+			if mv.UserInputType ~= Enum.UserInputType.Touch
+			and mv.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+			local y = mv.Position.Y
+			local now = os.clock()
+			swipe.lastY = y
+			swipe.lastT = now
+			-- Keep a rolling window of recent samples for velocity calc
+			table.insert(swipe.samples, { y = y, t = now })
+			while #swipe.samples > 1 and (now - swipe.samples[1].t) > 0.12 do
+				table.remove(swipe.samples, 1)
+			end
+
+			local dy = y - swipe.startY
+			if dy <= 0 then
+				-- Upward — follow finger 1:1
+				card.Position = UDim2.fromOffset(0, rec.yTarget + dy)
+				card.GroupTransparency = math.clamp(-dy / 60, 0, 0.6)
+			else
+				-- Downward — rubber band
+				local pull = math.min(dy * 0.3, 10)
+				card.Position = UDim2.fromOffset(0, rec.yTarget + pull)
+				card.GroupTransparency = 0
+			end
+		end)
+
+		endConn = UserInputService.InputEnded:Connect(function(ev)
+			if not swipe.active then return end
+			if ev.UserInputType ~= Enum.UserInputType.Touch
+			and ev.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+			-- Compute velocity from recent samples (last ~120ms window)
+			local velocity = 0
+			if #swipe.samples >= 2 then
+				local first = swipe.samples[1]
+				local last  = swipe.samples[#swipe.samples]
+				local dt = last.t - first.t
+				if dt > 0 then
+					velocity = (last.y - first.y) / dt   -- px/s, negative = upward
 				end
-			end)
+			end
+			local dy = swipe.lastY - swipe.startY
+			cleanupSwipe()
 
-			endConn = UserInputService.InputEnded:Connect(function(endInput)
-				if not swiping then return end
-				if endInput.UserInputType ~= Enum.UserInputType.Touch
-				and endInput.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-
-				swiping = false
-				if moveConn then moveConn:Disconnect(); moveConn = nil end
-				if endConn  then endConn:Disconnect();  endConn  = nil end
-
-				local dy = lastY - swipeStartY
-				local dt = math.max(os.clock() - lastTime, 0.001)
-				-- Velocity in px/sec (negative = upward)
-				local velocity = dy / math.max(os.clock() - swipeStartTime, 0.001)
-
-				-- Dismiss if dragged > 25px up OR flicked upward fast
-				local shouldDismiss = (dy < -25) or (velocity < -400)
-				if shouldDismiss then
-					if rec.dismissThread then task.cancel(rec.dismissThread); rec.dismissThread = nil end
-					for i, r in ipairs(notifStack) do
-						if r == rec then table.remove(notifStack, i); break end
-					end
-					TweenService:Create(card,
-						TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
-						{ Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 40)) }):Play()
-					TweenService:Create(card,
-						TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-						{ GroupTransparency = 1 }):Play()
-					task.delay(0.27, function()
-						if card and card.Parent then card:Destroy() end
-					end)
-					restack()
-				else
-					-- Snap back
-					TweenService:Create(card,
-						TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-						{ Position = UDim2.fromOffset(0, rec.yTarget) }):Play()
-					TweenService:Create(card,
-						TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-						{ GroupTransparency = 0 }):Play()
-				end
-			end)
-		end
+			-- Dismiss on either real distance OR a quick upward flick
+			local shouldDismiss = (dy < -20) or (velocity < -350)
+			if shouldDismiss then
+				dismissCard(rec, false)
+			else
+				-- Snap back smoothly
+				TweenService:Create(card,
+					TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+					{ Position = UDim2.fromOffset(0, rec.yTarget) }):Play()
+				TweenService:Create(card,
+					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ GroupTransparency = 0 }):Play()
+			end
+		end)
 	end)
 end
 
