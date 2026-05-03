@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 134
+local LG_VERSION = 135
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -624,11 +624,15 @@ local showNotif      -- defined near bottom; forward-decl so loadDIIcons can cal
 local LG_ICON_ARROW  = ""  -- Arrow dropdown menu.png
 local LG_ICON_CHECK  = ""  -- Checked.png
 local LG_ICON_SEARCH = ""  -- Search.png
+local LG_ICON_NOTIF  = ""  -- Notification.png (used inside notification cards)
+local LG_ICON_TAB    = ""  -- Tab icons.png (used inside sidebar tab rows)
 
 -- Registry of ImageLabels that need icons assigned once assets load.
 local LG_ARROW_REFS  = {}  -- chevron ImageLabels
 local LG_CHECK_REFS  = {}  -- {img, selected} entries (per-option checkmarks)
 local LG_SEARCH_REFS = {}  -- search bar icon ImageLabels
+local LG_NOTIF_REFS  = {}  -- notification card icon ImageLabels
+local LG_TAB_REFS    = {}  -- sidebar tab row icon ImageLabels
 
 local Overlay = Instance.new("Frame")
 Overlay.Size=UDim2.fromScale(1,1); Overlay.BackgroundColor3=Color3.fromRGB(8,10,18)
@@ -1187,6 +1191,8 @@ local function loadDIIcons()
 		["Arrow dropdown menu"] = "Arrow dropdown menu.png",
 		["Checked"]             = "Checked.png",
 		["Search"]              = "Search.png",
+		["Notification"]        = "Notification.png",
+		["Tab icons"]           = "Tab icons.png",
 	}
 	local GITHUB_BASE = "https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons"
 
@@ -1241,6 +1247,10 @@ local function loadDIIcons()
 				LG_ICON_CHECK = assetId
 			elseif key == "Search" then
 				LG_ICON_SEARCH = assetId
+			elseif key == "Notification" then
+				LG_ICON_NOTIF = assetId
+			elseif key == "Tab icons" then
+				LG_ICON_TAB = assetId
 			end
 		end
 	end
@@ -1255,6 +1265,12 @@ local function loadDIIcons()
 	end
 	for _, img in ipairs(LG_SEARCH_REFS) do
 		if img and img.Parent then img.Image = LG_ICON_SEARCH end
+	end
+	for _, img in ipairs(LG_NOTIF_REFS) do
+		if img and img.Parent then img.Image = LG_ICON_NOTIF end
+	end
+	for _, img in ipairs(LG_TAB_REFS) do
+		if img and img.Parent then img.Image = LG_ICON_TAB end
 	end
 	-- Notification cards for download results (silent on cache hits)
 	if downloadCount > 0 then
@@ -4934,15 +4950,17 @@ showNotif = function(opts)
 		end
 	end
 
-	local iconDot = Instance.new("Frame")
-	iconDot.Size = UDim2.fromOffset(8, 8)
-	iconDot.AnchorPoint = Vector2.new(0, 0.5)
-	iconDot.Position = UDim2.new(0, 16, 0.5, 0)
-	iconDot.BackgroundColor3 = T.blue
-	iconDot.BorderSizePixel = 0
-	iconDot.ZIndex = 51
-	iconDot.Parent = card
-	local ic = Instance.new("UICorner"); ic.CornerRadius = UDim.new(1,0); ic.Parent = iconDot
+	local notifIcon = Instance.new("ImageLabel")
+	notifIcon.Size = UDim2.fromOffset(20, 20)
+	notifIcon.AnchorPoint = Vector2.new(0, 0.5)
+	notifIcon.Position = UDim2.new(0, 12, 0.5, 0)
+	notifIcon.BackgroundTransparency = 1
+	notifIcon.BorderSizePixel = 0
+	notifIcon.ImageColor3 = T.blue
+	notifIcon.ZIndex = 51
+	notifIcon.Parent = card
+	if LG_ICON_NOTIF ~= "" then notifIcon.Image = LG_ICON_NOTIF end
+	table.insert(LG_NOTIF_REFS, notifIcon)
 
 	local titleLbl = Instance.new("TextLabel")
 	titleLbl.Size = UDim2.new(1, -52, 0, 18)
