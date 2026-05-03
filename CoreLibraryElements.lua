@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 137
+local LG_VERSION = 138
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -5022,15 +5022,20 @@ showNotif = function(opts)
 
 	local function cleanupSwipe()
 		swipe.active = false
+		if currentSwipingCard == card then currentSwipingCard = nil end
 		if moveConn then moveConn:Disconnect(); moveConn = nil end
 		if endConn  then endConn:Disconnect();  endConn  = nil end
 	end
 
 	card.InputBegan:Connect(function(input)
 		if swipe.active then return end
+		-- Only one card can be swiped at a time. If another card is already
+		-- being swiped, this card ignores the touch entirely.
+		if currentSwipingCard ~= nil and currentSwipingCard ~= card then return end
 		if input.UserInputType ~= Enum.UserInputType.Touch
 		and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
+		currentSwipingCard = card
 		swipe.active  = true
 		swipe.startY  = input.Position.Y
 		swipe.lastY   = input.Position.Y
