@@ -479,7 +479,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 128
+local LG_VERSION = 129
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -1225,6 +1225,11 @@ local DI_TYPE_ICON = {
 local LG_ICON_ARROW  = ""  -- Arrow dropdown menu.png
 local LG_ICON_CHECK  = ""  -- Checked.png
 
+-- Registry of ImageLabels that need arrow/check icons assigned once assets load.
+-- buildDropdown() populates these; loadDIIcons flushes them after download.
+local LG_ARROW_REFS = {}  -- list of ImageLabel instances (chevrons)
+local LG_CHECK_REFS = {}  -- list of {img=ImageLabel, selected=bool} entries
+
 -- Fetch and cache DI icons from GitHub on boot.
 -- Icons are stored locally via writefile so they persist across restarts.
 local function loadDIIcons()
@@ -1321,11 +1326,6 @@ local function loadDIIcons()
 		})
 	end
 end
-
--- Registry of ImageLabels that need arrow/check icons assigned once assets load.
--- buildDropdown() populates these; loadDIIcons flushes them after download.
-local LG_ARROW_REFS = {}  -- list of ImageLabel instances (chevrons)
-local LG_CHECK_REFS = {}  -- list of {img=ImageLabel, selected=bool} entries
 
 -- Load icons asynchronously so they don't block the UI
 task.spawn(loadDIIcons)
