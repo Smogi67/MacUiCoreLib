@@ -4873,6 +4873,7 @@ NotifContainer.ZIndex = 50
 NotifContainer.Parent = ScreenGui
 
 local notifStack = {}  -- { frame, dismissThread, yTarget }
+local currentSwipingCard = nil  -- only one card can be swiped at a time
 
 local function notifYFor(idx)
 	return idx * (NOTIF_CARD_H + NOTIF_GAP)
