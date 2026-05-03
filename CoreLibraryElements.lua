@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 135
+local LG_VERSION = 137
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -3105,8 +3105,7 @@ local function buildSidebarRow(tabName, _iconName, subText)
 	Instance.new("UICorner",bg).CornerRadius=UDim.new(0,8)
 
 	local iconSize=26
-	-- Plain blue placeholder square. Pixel-art icon system was removed —
-	-- wire up image-based tab icons here when ready.
+	-- Tab icon background (rounded blue square with gradient + stroke).
 	local iconBg=Instance.new("Frame"); iconBg.Size=UDim2.fromOffset(iconSize,iconSize)
 	iconBg.AnchorPoint=Vector2.new(0,0.5); iconBg.Position=UDim2.new(0,4,0.5,0)
 	iconBg.BackgroundColor3=T.blue
@@ -3120,6 +3119,14 @@ local function buildSidebarRow(tabName, _iconName, subText)
 	ig.Rotation=135; ig.Parent=iconBg
 	local is=Instance.new("UIStroke"); is.Color=Color3.fromRGB(255,255,255)
 	is.Transparency=0.7; is.Thickness=1; is.Parent=iconBg
+
+	-- Tab icon image (Tab icons.png), centred in iconBg.
+	local tabIco=Instance.new("ImageLabel"); tabIco.Size=UDim2.fromOffset(16,16)
+	tabIco.AnchorPoint=Vector2.new(0.5,0.5); tabIco.Position=UDim2.fromScale(0.5,0.5)
+	tabIco.BackgroundTransparency=1; tabIco.ImageColor3=Color3.fromRGB(255,255,255)
+	tabIco.ZIndex=17; tabIco.Parent=iconBg
+	if LG_ICON_TAB ~= "" then tabIco.Image=LG_ICON_TAB end
+	table.insert(LG_TAB_REFS, tabIco)
 
 	local lbl=Instance.new("TextLabel"); lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium
 	lbl.TextSize=13; lbl.TextColor3=T.textPrimary; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=16
@@ -4953,7 +4960,7 @@ showNotif = function(opts)
 	local notifIcon = Instance.new("ImageLabel")
 	notifIcon.Size = UDim2.fromOffset(20, 20)
 	notifIcon.AnchorPoint = Vector2.new(0, 0.5)
-	notifIcon.Position = UDim2.new(0, 12, 0.5, 0)
+	notifIcon.Position = UDim2.new(0, 6, 0.5, 0)
 	notifIcon.BackgroundTransparency = 1
 	notifIcon.BorderSizePixel = 0
 	notifIcon.ImageColor3 = T.blue
