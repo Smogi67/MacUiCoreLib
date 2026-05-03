@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 133
+local LG_VERSION = 134
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -617,6 +617,18 @@ local SRF
 local SearchBox
 local PromptBlocker  -- created at line ~2774, referenced inside buildColorPicker closures
 local showNotif      -- defined near bottom; forward-decl so loadDIIcons can call it
+
+-- Image asset paths (populated by loadDIIcons after download).
+-- Declared up here because SearchWrap (built at module load) references LG_ICON_SEARCH
+-- before the icon-system block runs.
+local LG_ICON_ARROW  = ""  -- Arrow dropdown menu.png
+local LG_ICON_CHECK  = ""  -- Checked.png
+local LG_ICON_SEARCH = ""  -- Search.png
+
+-- Registry of ImageLabels that need icons assigned once assets load.
+local LG_ARROW_REFS  = {}  -- chevron ImageLabels
+local LG_CHECK_REFS  = {}  -- {img, selected} entries (per-option checkmarks)
+local LG_SEARCH_REFS = {}  -- search bar icon ImageLabels
 
 local Overlay = Instance.new("Frame")
 Overlay.Size=UDim2.fromScale(1,1); Overlay.BackgroundColor3=Color3.fromRGB(8,10,18)
@@ -1001,7 +1013,9 @@ SearchWrap.BorderSizePixel=0; SearchWrap.ZIndex=15; SearchWrap.Parent=Sidebar
 liquidGlass(SearchWrap,{radius=9,sheen=false,strokeT=0.7})
 local SearchIco=Instance.new("ImageLabel"); SearchIco.Size=UDim2.fromOffset(14,14)
 SearchIco.AnchorPoint=Vector2.new(0,0.5); SearchIco.Position=UDim2.new(0,9,0.5,0)
-SearchIco.BackgroundTransparency=1; SearchIco.Image=LG_ICON_SEARCH
+SearchIco.BackgroundTransparency=1
+-- Only assign Image when non-empty; some executors reject "" as a ContentId.
+if LG_ICON_SEARCH ~= "" then SearchIco.Image=LG_ICON_SEARCH end
 SearchIco.ImageColor3=T.textTertiary; SearchIco.ZIndex=16; SearchIco.Parent=SearchWrap
 table.insert(LG_SEARCH_REFS, SearchIco)
 SearchBox=Instance.new("TextBox"); SearchBox.Size=UDim2.new(1,-32,1,0); SearchBox.AnchorPoint=Vector2.new(0,0)
@@ -1153,16 +1167,8 @@ local DI_TYPE_ICON = {
 	warning  = "",   -- "Warning"
 }
 
--- Dropdown UI icon paths (populated by loadDIIcons)
-local LG_ICON_ARROW  = ""  -- Arrow dropdown menu.png
-local LG_ICON_CHECK  = ""  -- Checked.png
-local LG_ICON_SEARCH = ""  -- Search.png
-
--- Registry of ImageLabels that need arrow/check icons assigned once assets load.
--- buildDropdown() populates these; loadDIIcons flushes them after download.
-local LG_ARROW_REFS  = {}  -- list of ImageLabel instances (chevrons)
-local LG_CHECK_REFS  = {}  -- list of {img=ImageLabel, selected=bool} entries
-local LG_SEARCH_REFS = {}  -- list of ImageLabel instances (search bar icon)
+-- Image-based icons are populated asynchronously by loadDIIcons() below.
+-- See top-of-file forward declarations for LG_ICON_* and LG_*_REFS.
 
 -- Fetch and cache DI icons from GitHub on boot.
 -- Icons are stored locally via writefile so they persist across restarts.
