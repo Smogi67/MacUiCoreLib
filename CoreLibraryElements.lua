@@ -38,17 +38,13 @@
   ─────────────────────────────────────────────────────────
   Registers a new sidebar tab.
     tabName   string   Unique identifier AND display label
-    iconName  string   Built-in icon key (see ICON LIST below)
-                       or "custom" to draw a blank badge
+    iconName  string?  Ignored — kept for backward compatibility.
+                       The old pixel-art icon system was removed;
+                       sidebar rows render a plain blue placeholder
+                       square. Pass nil or any string.
     subText   string?  Optional subtitle under the tab name
                        (shown when provided, e.g. "Connected")
   Returns: tab handle used by AddSection / AddControl
-
-  Built-in icon keys:
-    "Wi-Fi"  "Bluetooth"  "Network"  "Notifications"  "Sound"
-    "Focus"  "Screen Time"  "General"  "Appearance"  "Accessibility"
-    "Privacy"  "Desktop"  "Display"  "Battery"  "Keyboard"
-    "Mouse"  "Trackpad"  "Users"  "Passwords"  "Software Update"
 
   ─────────────────────────────────────────────────────────
   tab:AddSection(header?)
@@ -406,7 +402,7 @@
       accentColor = Color3.fromRGB(255, 80, 120),
   })
 
-  local graphicsTab = LiquidGlass:AddTab("Graphics", "Display")
+  local graphicsTab = LiquidGlass:AddTab("Graphics")
 
   local qualitySection = graphicsTab:AddSection("Quality")
   qualitySection:AddDropdown("Render Quality", {"Low","Medium","High","Ultra"}, 3, function(idx, label)
@@ -419,7 +415,7 @@
       Lighting.GlobalShadows = on
   end)
 
-  local audioTab = LiquidGlass:AddTab("Audio", "Sound")
+  local audioTab = LiquidGlass:AddTab("Audio")
   local audioSection = audioTab:AddSection("Volume")
   local masterSlider = audioSection:AddSlider("Master Volume", 1.0)
   audioSection:AddSlider("Music", 0.7, function(v)
@@ -432,7 +428,7 @@
       print("Ping!")
   end)
 
-  local networkTab = LiquidGlass:AddTab("Network", "Wi-Fi", "Connected")
+  local networkTab = LiquidGlass:AddTab("Network", nil, "Connected")
   local netSection = networkTab:AddSection("Status")
   local statusInfo = netSection:AddInfo("Region", "US East")
   netSection:AddToggle("Auto-connect", true)
@@ -479,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 131
+local LG_VERSION = 133
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -576,73 +572,6 @@ local function liquidGlass(frame, opts)
 		ssg.Parent = sheenF
 	end
 	return stroke
-end
-
--- ============================================================
--- ICON ACCENT COLOURS
--- ============================================================
-local ICON_COLOR = {
-	["Wi-Fi"]="b",["Bluetooth"]="b",["Network"]=Color3.fromRGB(80,100,255),
-	["Notifications"]="r",["Sound"]="o",["Focus"]=Color3.fromRGB(100,200,100),
-	["Screen Time"]="r",["General"]=Color3.fromRGB(140,140,150),
-	["Appearance"]=Color3.fromRGB(110,100,255),["Accessibility"]="b",
-	["Privacy"]="g",["Desktop"]="b",["Display"]=Color3.fromRGB(0,199,190),
-	["Battery"]="g",["Keyboard"]=Color3.fromRGB(140,140,150),
-	["Mouse"]=Color3.fromRGB(140,140,150),["Trackpad"]=Color3.fromRGB(140,140,150),
-	["Users"]=Color3.fromRGB(100,180,255),["Passwords"]="y",
-	["Software Update"]="b",
-}
-local function resolveIconColor(key)
-	local v = ICON_COLOR[key]
-	if not v then return T.blue end
-	if type(v)=="string" then
-		local m={b=T.blue,g=T.green,r=T.red,o=T.orange,y=T.yellow}
-		return m[v] or T.blue
-	end
-	return v
-end
-
--- ============================================================
--- ICON RENDERER
--- ============================================================
-local function newRect(parent,x,y,w,h,color,radius)
-	local f=Instance.new("Frame")
-	f.Position=UDim2.fromOffset(x,y); f.Size=UDim2.fromOffset(w,h)
-	f.BackgroundColor3=color or T.textPrimary; f.BackgroundTransparency=0
-	f.BorderSizePixel=0; f.ZIndex=(parent.ZIndex or 1)+1; f.Parent=parent
-	if radius and radius>0 then Instance.new("UICorner",f).CornerRadius=UDim.new(0,radius) end
-	return f
-end
-
-local function buildIcon(parent,name,S)
-	S=S or 18; local c=T.textPrimary; local s=S/18
-	local function px(x,y,w,h,col,rad)
-		return newRect(parent,math.round(x*s),math.round(y*s),
-			math.max(1,math.round(w*s)),math.max(1,math.round(h*s)),col,rad)
-	end
-	local function r(x,y,w,h,col,rad) return px(x,y,w,h,col or c,rad) end
-	if name=="Wi-Fi" then
-		r(6,12,6,2,c,1);r(3,8,12,2,c,1);r(0,4,18,2,c,1);r(7,15,4,4,c,2)
-	elseif name=="Bluetooth" then r(8,1,2,16,c,1);r(8,1,8,8,c,1);r(8,9,8,8,c,1)
-	elseif name=="Sound" then r(2,6,4,6,c,1);r(6,3,4,12,c,2);r(12,5,2,2,c,1);r(14,3,2,2,c,1);r(14,7,2,2,c,1)
-	elseif name=="General" then r(2,3,14,3,c,1);r(2,8,14,3,c,1);r(2,13,14,3,c,1)
-	elseif name=="Display" then r(1,2,16,12,c,3);r(6,14,6,2,c,1);r(3,16,12,1,c,1)
-	elseif name=="Battery" then r(1,5,14,8,c,3);r(15,7,2,4,c,1);r(3,7,8,4,T.green,2)
-	elseif name=="Keyboard" then r(1,5,16,9,c,3);r(3,7,2,2,c,1);r(6,7,2,2,c,1);r(9,7,2,2,c,1);r(12,7,2,2,c,1);r(5,10,8,2,c,1)
-	elseif name=="Notifications" then r(4,2,10,12,c,4);r(2,10,14,4,c,2);r(6,14,6,2,c,1);r(8,16,2,2,c,2)
-	elseif name=="Privacy" then r(4,8,10,9,c,3);r(5,2,8,8,c,2);r(5,5,8,6,T.sidebarBg,1);r(7,10,4,4,T.green,2)
-	elseif name=="Appearance" then r(1,1,16,16,c,8);r(9,1,9,16,T.sidebarBg,0)
-	elseif name=="Accessibility" then r(7,0,4,4,c,2);r(2,5,14,2,c,1);r(6,7,2,10,c,1);r(10,7,2,10,c,1)
-	elseif name=="Network" then r(7,7,4,4,c,2);r(8,0,2,6,c,1);r(8,12,2,6,c,1);r(0,8,6,2,c,1);r(12,8,6,2,c,1)
-	elseif name=="Users" then r(6,1,6,6,c,3);r(2,9,14,8,c,4)
-	elseif name=="Passwords" then r(4,7,10,9,c,3);r(5,2,8,8,c,3);r(5,5,8,5,T.sidebarBg,1);r(8,10,2,3,T.yellow,1)
-	elseif name=="Software Update" then r(1,1,16,16,c,8);r(3,3,12,12,T.sidebarBg,6);r(7,3,4,9,c,2);r(4,10,10,2,c,1)
-	elseif name=="Mouse" then r(5,1,8,13,c,5);r(5,1,4,7,c,2);r(9,1,4,7,c,2);r(9,1,2,7,T.sidebarBg,0)
-	elseif name=="Trackpad" then r(1,1,16,16,c,5);r(2,2,14,14,T.sidebarBg,4);r(8,1,2,16,c,0)
-	elseif name=="Screen Time" then r(1,2,16,12,c,3);r(6,14,6,2,c,1);r(3,16,12,1,c,1);r(8,5,2,6,T.red,1);r(8,5,4,2,T.red,1)
-	elseif name=="Focus" then r(1,1,16,16,c,8);r(4,4,10,10,T.sidebarBg,5);r(7,7,4,4,c,2)
-	elseif name=="Desktop" then r(1,2,16,11,c,3);r(3,4,12,7,T.blue,2);r(6,13,6,2,c,1);r(3,15,12,1,c,1)
-	else r(1,1,16,16,c,4) end
 end
 
 -- ============================================================
@@ -1070,14 +999,17 @@ local SearchWrap=Instance.new("Frame"); SearchWrap.Size=UDim2.new(1,-16,0,32); S
 SearchWrap.BackgroundColor3=T.cardBg; SearchWrap.BackgroundTransparency=0.4
 SearchWrap.BorderSizePixel=0; SearchWrap.ZIndex=15; SearchWrap.Parent=Sidebar
 liquidGlass(SearchWrap,{radius=9,sheen=false,strokeT=0.7})
-local SearchIco=Instance.new("TextLabel"); SearchIco.Size=UDim2.fromOffset(22,32); SearchIco.Position=UDim2.fromOffset(8,0)
-SearchIco.BackgroundTransparency=1; SearchIco.Text=""; SearchIco.Font=Enum.Font.GothamBold; SearchIco.TextSize=16
-SearchIco.TextColor3=T.textTertiary; SearchIco.ZIndex=16; SearchIco.Parent=SearchWrap
-SearchBox=Instance.new("TextBox"); SearchBox.Size=UDim2.new(1,-18,1,0); SearchBox.AnchorPoint=Vector2.new(0,0)
-SearchBox.Position=UDim2.new(0,10,0,0)
+local SearchIco=Instance.new("ImageLabel"); SearchIco.Size=UDim2.fromOffset(14,14)
+SearchIco.AnchorPoint=Vector2.new(0,0.5); SearchIco.Position=UDim2.new(0,9,0.5,0)
+SearchIco.BackgroundTransparency=1; SearchIco.Image=LG_ICON_SEARCH
+SearchIco.ImageColor3=T.textTertiary; SearchIco.ZIndex=16; SearchIco.Parent=SearchWrap
+table.insert(LG_SEARCH_REFS, SearchIco)
+SearchBox=Instance.new("TextBox"); SearchBox.Size=UDim2.new(1,-32,1,0); SearchBox.AnchorPoint=Vector2.new(0,0)
+SearchBox.Position=UDim2.new(0,28,0,0)
 SearchBox.BackgroundTransparency=1; SearchBox.PlaceholderText="Search"; SearchBox.PlaceholderColor3=T.textTertiary
 SearchBox.Text=""; SearchBox.Font=Enum.Font.Gotham; SearchBox.TextSize=14
 SearchBox.TextColor3=T.textPrimary; SearchBox.ClearTextOnFocus=false
+SearchBox.TextXAlignment=Enum.TextXAlignment.Left
 SearchBox.TextYAlignment=Enum.TextYAlignment.Center; SearchBox.MultiLine=false
 SearchBox.ZIndex=16; SearchBox.Parent=SearchWrap
 
@@ -1224,11 +1156,13 @@ local DI_TYPE_ICON = {
 -- Dropdown UI icon paths (populated by loadDIIcons)
 local LG_ICON_ARROW  = ""  -- Arrow dropdown menu.png
 local LG_ICON_CHECK  = ""  -- Checked.png
+local LG_ICON_SEARCH = ""  -- Search.png
 
 -- Registry of ImageLabels that need arrow/check icons assigned once assets load.
 -- buildDropdown() populates these; loadDIIcons flushes them after download.
-local LG_ARROW_REFS = {}  -- list of ImageLabel instances (chevrons)
-local LG_CHECK_REFS = {}  -- list of {img=ImageLabel, selected=bool} entries
+local LG_ARROW_REFS  = {}  -- list of ImageLabel instances (chevrons)
+local LG_CHECK_REFS  = {}  -- list of {img=ImageLabel, selected=bool} entries
+local LG_SEARCH_REFS = {}  -- list of ImageLabel instances (search bar icon)
 
 -- Fetch and cache DI icons from GitHub on boot.
 -- Icons are stored locally via writefile so they persist across restarts.
@@ -1246,6 +1180,7 @@ local function loadDIIcons()
 		warning  = "Warning.png",
 		["Arrow dropdown menu"] = "Arrow dropdown menu.png",
 		["Checked"]             = "Checked.png",
+		["Search"]              = "Search.png",
 	}
 	local GITHUB_BASE = "https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons"
 
@@ -1298,6 +1233,8 @@ local function loadDIIcons()
 				LG_ICON_ARROW = assetId
 			elseif key == "Checked" then
 				LG_ICON_CHECK = assetId
+			elseif key == "Search" then
+				LG_ICON_SEARCH = assetId
 			end
 		end
 	end
@@ -1309,6 +1246,9 @@ local function loadDIIcons()
 		if entry.img and entry.img.Parent and entry.selected then
 			entry.img.Image = LG_ICON_CHECK
 		end
+	end
+	for _, img in ipairs(LG_SEARCH_REFS) do
+		if img and img.Parent then img.Image = LG_ICON_SEARCH end
 	end
 	-- Notification cards for download results (silent on cache hits)
 	if downloadCount > 0 then
@@ -1789,7 +1729,7 @@ end
 -- LIBRARY STATE
 -- ============================================================
 local LG_tabs       = {}  -- ordered list of tab names
-local LG_tabData    = {}  -- [name] = { iconName, subText, sections=[] }
+local LG_tabData    = {}  -- [name] = { title, subText, sections=[] }
 local LG_sidebarBtns= {}  -- [name] = {bg, lbl}
 local LG_sbOrder    = 0
 local LG_config        = {}
@@ -3133,7 +3073,7 @@ end
 -- ============================================================
 local selectPage  -- forward decl
 
-local function buildSidebarRow(tabName, iconName, subText)
+local function buildSidebarRow(tabName, _iconName, subText)
 	local H = 38  -- always 38 — subtitle fits inside without extra height
 	local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,H); row.BackgroundTransparency=1
 	row.LayoutOrder=LG_sbOrder; LG_sbOrder+=1; row.ZIndex=15; row.Parent=SBList
@@ -3143,18 +3083,21 @@ local function buildSidebarRow(tabName, iconName, subText)
 	Instance.new("UICorner",bg).CornerRadius=UDim.new(0,8)
 
 	local iconSize=26
+	-- Plain blue placeholder square. Pixel-art icon system was removed —
+	-- wire up image-based tab icons here when ready.
 	local iconBg=Instance.new("Frame"); iconBg.Size=UDim2.fromOffset(iconSize,iconSize)
 	iconBg.AnchorPoint=Vector2.new(0,0.5); iconBg.Position=UDim2.new(0,4,0.5,0)
-	iconBg.BackgroundColor3=resolveIconColor(iconName)
+	iconBg.BackgroundColor3=T.blue
 	iconBg.BorderSizePixel=0; iconBg.ZIndex=16; iconBg.Parent=row
 	Instance.new("UICorner",iconBg).CornerRadius=UDim.new(0,6)
-	local base=resolveIconColor(iconName)
-	local ig=Instance.new("UIGradient"); ig.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,base:Lerp(Color3.new(1,1,1),0.3)),ColorSequenceKeypoint.new(1,base)}); ig.Rotation=135; ig.Parent=iconBg
-	local is=Instance.new("UIStroke"); is.Color=Color3.fromRGB(255,255,255); is.Transparency=0.7; is.Thickness=1; is.Parent=iconBg
-
-	local ico=Instance.new("Frame"); ico.Size=UDim2.fromOffset(iconSize-6,iconSize-6)
-	ico.Position=UDim2.fromOffset(3,3); ico.BackgroundTransparency=1; ico.ZIndex=17; ico.Parent=iconBg
-	buildIcon(ico,iconName,iconSize-6)
+	local ig=Instance.new("UIGradient")
+	ig.Color=ColorSequence.new({
+		ColorSequenceKeypoint.new(0,T.blue:Lerp(Color3.new(1,1,1),0.3)),
+		ColorSequenceKeypoint.new(1,T.blue),
+	})
+	ig.Rotation=135; ig.Parent=iconBg
+	local is=Instance.new("UIStroke"); is.Color=Color3.fromRGB(255,255,255)
+	is.Transparency=0.7; is.Thickness=1; is.Parent=iconBg
 
 	local lbl=Instance.new("TextLabel"); lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium
 	lbl.TextSize=13; lbl.TextColor3=T.textPrimary; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=16
@@ -4566,19 +4509,17 @@ function LiquidGlass:SetConfig(opts)
 end
 
 
+-- iconName parameter kept for backward compatibility but is now ignored.
+-- The pixel-art icon system was removed; sidebar rows render a plain blue
+-- placeholder square. Wire image-based icons in buildSidebarRow when ready.
 function LiquidGlass:AddTab(tabName, iconName, subText)
 	table.insert(LG_tabs, tabName)
 	LG_tabData[tabName]={
 		title=tabName,
-		iconName=iconName or "General",
 		subText=subText,
 		sections={}
 	}
-	-- Build sidebar row immediately
-	if #LG_tabs>1 then
-		-- small spacer before groups of items; handled by layout order
-	end
-	buildSidebarRow(tabName, iconName or "General", subText)
+	buildSidebarRow(tabName, nil, subText)
 
 	local handle=setmetatable({
 		_name=tabName,
