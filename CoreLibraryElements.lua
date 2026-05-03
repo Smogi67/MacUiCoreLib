@@ -479,7 +479,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 129
+local LG_VERSION = 130
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -4913,7 +4913,7 @@ local function restack()
 		local targetY = notifYFor(i - 1)
 		rec.yTarget = targetY
 		TweenService:Create(rec.frame,
-			TweenInfo.new(NOTIF_ANIM_OUT, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+			TweenInfo.new(0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
 			{ Position = UDim2.fromOffset(0, targetY) }):Play()
 	end
 end
@@ -4926,12 +4926,13 @@ local function dismissCard(rec, instant)
 	for i, r in ipairs(notifStack) do
 		if r == rec then table.remove(notifStack, i); break end
 	end
-	local dur = instant and 0.01 or NOTIF_ANIM_OUT
+	local dur = instant and 0.01 or 0.42
+	-- Smooth slide up + fade out using matching Sine/Out easing
 	TweenService:Create(rec.frame,
-		TweenInfo.new(dur, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+		TweenInfo.new(dur, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
 		{ Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20)) }):Play()
 	TweenService:Create(rec.frame,
-		TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+		TweenInfo.new(dur * 0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
 		{ GroupTransparency = 1 }):Play()
 	task.delay(dur + 0.05, function()
 		if rec.frame and rec.frame.Parent then rec.frame:Destroy() end
@@ -4965,6 +4966,19 @@ showNotif = function(opts)
 	card.Parent = NotifContainer
 
 	liquidGlass(card, { radius = NOTIF_RADIUS, strokeT = 0.3 })
+
+	-- Override the liquidGlass gradient to be much more opaque so the
+	-- notification reads as a solid card (the default glass gradient is
+	-- 0.55-0.78 which is fine for window/sidebar but too transparent here).
+	for _, ch in ipairs(card:GetChildren()) do
+		if ch:IsA("UIGradient") then
+			ch.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0.00, 0.05),
+				NumberSequenceKeypoint.new(0.50, 0.18),
+				NumberSequenceKeypoint.new(1.00, 0.10),
+			})
+		end
+	end
 
 	local iconDot = Instance.new("Frame")
 	iconDot.Size = UDim2.fromOffset(8, 8)
