@@ -479,7 +479,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 130
+local LG_VERSION = 131
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -4934,6 +4934,13 @@ local function dismissCard(rec, instant)
 	TweenService:Create(rec.frame,
 		TweenInfo.new(dur * 0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
 		{ GroupTransparency = 1 }):Play()
+	-- Stroke is NOT inside the CanvasGroup's transparency control — it has
+	-- its own Transparency property, so fade it explicitly in sync.
+	if rec.stroke then
+		TweenService:Create(rec.stroke,
+			TweenInfo.new(dur * 0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+			{ Transparency = 1 }):Play()
+	end
 	task.delay(dur + 0.05, function()
 		if rec.frame and rec.frame.Parent then rec.frame:Destroy() end
 	end)
@@ -4965,7 +4972,7 @@ showNotif = function(opts)
 	card.ClipsDescendants = false
 	card.Parent = NotifContainer
 
-	liquidGlass(card, { radius = NOTIF_RADIUS, strokeT = 0.3 })
+	local cardStroke = liquidGlass(card, { radius = NOTIF_RADIUS, strokeT = 0.3 })
 
 	-- Override the liquidGlass gradient to be much more opaque so the
 	-- notification reads as a solid card (the default glass gradient is
@@ -5019,7 +5026,7 @@ showNotif = function(opts)
 		msgLbl.Parent = card
 	end
 
-	local rec = { frame = card, dismissThread = nil, yTarget = targetY }
+	local rec = { frame = card, stroke = cardStroke, dismissThread = nil, yTarget = targetY }
 	table.insert(notifStack, rec)
 
 	TweenService:Create(card,
