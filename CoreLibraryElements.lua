@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 141
+local LG_VERSION = 142
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -2157,10 +2157,13 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 	local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(0.55,0,0,20); lbl.Position=UDim2.fromOffset(16,8)
 	lbl.BackgroundTransparency=1; lbl.Text=label; lbl.Font=Enum.Font.Gotham; lbl.TextSize=14
 	lbl.TextColor3=T.textPrimary; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=16; lbl.Parent=row
-	local valLbl=Instance.new("TextLabel"); valLbl.Size=UDim2.new(0.38,0,0,20); valLbl.Position=UDim2.new(0.55,0,0,8)
+	local valLbl=Instance.new("TextBox"); valLbl.Size=UDim2.new(0.38,0,0,20); valLbl.Position=UDim2.new(0.55,0,0,8)
 	valLbl.BackgroundTransparency=1; valLbl.Text=math.round(val*100).."%"
 	valLbl.Font=Enum.Font.Gotham; valLbl.TextSize=13; valLbl.TextColor3=T.textSecond
 	valLbl.TextXAlignment=Enum.TextXAlignment.Right; valLbl.ZIndex=16; valLbl.Parent=row
+	valLbl.ClearTextOnFocus=true       -- iOS-like: tap shows empty field for clean entry
+	valLbl.MultiLine=false
+	valLbl.PlaceholderText=""
 	local track=Instance.new("Frame"); track.Size=UDim2.new(1,-32,0,5); track.Position=UDim2.fromOffset(16,36)
 	track.BackgroundColor3=T.sliderTrack; track.BackgroundTransparency=0.2
 	track.BorderSizePixel=0; track.ZIndex=16; track.Parent=row
@@ -2249,7 +2252,7 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 			end
 		end
 	end
-	track.InputBegan:Connect(startDrag)
+	-- Only the knob can start a drag — clicking elsewhere on the track does nothing.
 	knob.InputBegan:Connect(startDrag)
 
 	local moveConn, endConn
@@ -2336,6 +2339,31 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 				end)
 				diDismissThread = task.delay(DI_HOLD_TIME, diDismiss)
 			end
+		end
+	end)
+
+	-- Editable percentage: tap the value to type a number, press Enter / tap
+	-- away to apply. Accepts "50", "50%", "  50  %", "0.5". Out-of-range
+	-- values clamp to 0–100. Invalid input reverts to current value.
+	valLbl.FocusLost:Connect(function(enterPressed)
+		local raw = valLbl.Text:gsub("%%", ""):gsub("%s", "")
+		local n = tonumber(raw)
+		if not n then
+			-- Invalid input — revert display
+			valLbl.Text = math.round(val*100).."%"
+			return
+		end
+		-- Accept either 0-1 or 0-100 input. >1.0 means percentage form.
+		if n > 1 then n = n / 100 end
+		val = math.clamp(n, 0, 1)
+		fill.Size = UDim2.fromScale(val,1)
+		knob.Position = UDim2.new(val,0,0.5,0)
+		valLbl.Text = math.round(val*100).."%"
+		-- Fire user callback the same way a drag would — but skip the DI
+		-- machinery: typing a number is a deliberate set, not a live scrub.
+		if callback then
+			diNotifyCalled = false
+			callback(val)
 		end
 	end)
 
