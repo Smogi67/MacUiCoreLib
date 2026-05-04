@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 139
+local LG_VERSION = 141
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -694,6 +694,7 @@ local LG_savedWindowPos  = nil  -- UDim2 — last user-set window position
 local LG_savedDockPos    = nil  -- UDim2 — last user-set dock icon position
 local LG_preMaxSize      = nil  -- UDim2 — size before maximize, for restore
 local LG_preMaxPos       = nil  -- UDim2 — pos before maximize, for restore
+local LG_greenState      = "saved"  -- "saved" | "maximized" | "default" — green-button cycle
 local function getWinSize()
 	local vp=workspace.CurrentCamera.ViewportSize
 	local inset=GuiService:GetGuiInset()
@@ -845,6 +846,8 @@ do
 		dragging = false
 		-- Persist the final position so it survives viewport changes / restores
 		LG_savedWindowPos = Window.Position
+		-- A manual move means the user has a new "saved" state for the green-button cycle
+		LG_greenState = "saved"
 	end)
 
 	-- ─── Corner resize handles ────────────────────────────────
@@ -879,47 +882,62 @@ do
 			if input.UserInputType ~= Enum.UserInputType.MouseButton1
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
 			resizing = true
-			rStart = input.Position
-			sStart = Window.AbsoluteSize
-			pStart = Window.AbsolutePosition
+			rStart = input.Position           -- screen-space px
+			sStart = Window.Size              -- UDim2 (logical units)
+			pStart = Window.Position          -- UDim2 (logical units)
 		end)
 
 		UserInputService.InputChanged:Connect(function(input)
 			if not resizing then return end
 			if input.UserInputType ~= Enum.UserInputType.MouseMovement
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-			local delta = input.Position - rStart
-			-- Compute new size based on which corner is being dragged.
-			-- BR pulls bottom-right out; TL pulls top-left in/out keeping BR anchored, etc.
-			local nw, nh = sStart.X, sStart.Y
-			local npx, npy = pStart.X, pStart.Y
+			-- Convert pointer delta from screen-space pixels to LOGICAL units.
+			-- Window.Size and Window.Position offsets live in logical units
+			-- (the parent ScreenGui has a UIScale applied to it).
+			local s = uiScale.Scale
+			local dx = (input.Position.X - rStart.X) / s
+			local dy = (input.Position.Y - rStart.Y) / s
+
+			-- For each corner, determine size change AND how much the centre
+			-- shifts. Window has AnchorPoint(0.5,0.5), so the centre IS the
+			-- Position. When BR moves out by (dx,dy), the centre moves by
+			-- (dx/2, dy/2). When TL moves in by (dx,dy), the centre moves by
+			-- (dx/2, dy/2) too — same direction the corner moved.
+			local sw, sh = sStart.X.Offset, sStart.Y.Offset
+			local nw, nh = sw, sh
+			local cdx, cdy = 0, 0  -- centre shift in logical units
+
 			if h.name == "BR" then
-				nw = math.max(MIN_W, sStart.X + delta.X)
-				nh = math.max(MIN_H, sStart.Y + delta.Y)
+				nw = math.max(MIN_W, sw + dx)
+				nh = math.max(MIN_H, sh + dy)
+				cdx = (nw - sw) / 2
+				cdy = (nh - sh) / 2
 			elseif h.name == "BL" then
-				nw = math.max(MIN_W, sStart.X - delta.X)
-				nh = math.max(MIN_H, sStart.Y + delta.Y)
-				npx = pStart.X + (sStart.X - nw)
+				nw = math.max(MIN_W, sw - dx)
+				nh = math.max(MIN_H, sh + dy)
+				cdx = -(nw - sw) / 2
+				cdy = (nh - sh) / 2
 			elseif h.name == "TR" then
-				nw = math.max(MIN_W, sStart.X + delta.X)
-				nh = math.max(MIN_H, sStart.Y - delta.Y)
-				npy = pStart.Y + (sStart.Y - nh)
+				nw = math.max(MIN_W, sw + dx)
+				nh = math.max(MIN_H, sh - dy)
+				cdx = (nw - sw) / 2
+				cdy = -(nh - sh) / 2
 			elseif h.name == "TL" then
-				nw = math.max(MIN_W, sStart.X - delta.X)
-				nh = math.max(MIN_H, sStart.Y - delta.Y)
-				npx = pStart.X + (sStart.X - nw)
-				npy = pStart.Y + (sStart.Y - nh)
+				nw = math.max(MIN_W, sw - dx)
+				nh = math.max(MIN_H, sh - dy)
+				cdx = -(nw - sw) / 2
+				cdy = -(nh - sh) / 2
 			end
 
-			-- Window has AnchorPoint(0.5,0.5), so target Position must be the
-			-- centre of the new rect, not its top-left.
-			local centerX = npx + nw/2
-			local centerY = npy + nh/2
+			-- Preserve the original Position's scale components — only nudge offsets.
+			local newPos = UDim2.new(
+				pStart.X.Scale, pStart.X.Offset + cdx,
+				pStart.Y.Scale, pStart.Y.Offset + cdy
+			)
 			local newSize = UDim2.fromOffset(nw, nh)
-			local newPos  = UDim2.fromOffset(centerX, centerY)
 			Window.Size     = newSize
 			Window.Position = newPos
-			Shadow.Size     = UDim2.fromOffset(nw+80, nh+80)
+			Shadow.Size     = UDim2.fromOffset(nw + 80, nh + 80)
 			Shadow.Position = newPos
 		end)
 
@@ -928,9 +946,9 @@ do
 			if input.UserInputType ~= Enum.UserInputType.MouseButton1
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
 			resizing = false
-			-- Persist the final size + position
 			LG_savedWindowSize = Window.Size
 			LG_savedWindowPos  = Window.Position
+			LG_greenState = "saved"
 		end)
 	end
 end
@@ -1128,24 +1146,16 @@ trafficButtons[3].MouseButton1Click:Connect(function()
 	-- Hide results during resize — reshow after tween if search is active
 	local hadSearch = SRF.Visible
 	SRF.Visible = false
-	if maximized then
-		maximized=false
-		-- Restore to the size/position the user had before maximizing
-		local restoreSize = LG_preMaxSize
-		local restorePos  = LG_preMaxPos
-		if not restoreSize or not restorePos then
-			local w,h = getWinSize()
-			restoreSize = UDim2.fromOffset(w,h)
-			restorePos  = getRestPosition()
-		end
-		tween(Window,0.38,{Size=restoreSize,Position=restorePos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-		tween(Shadow,0.38,{Size=UDim2.fromOffset(restoreSize.X.Offset+80,restoreSize.Y.Offset+80),Position=restorePos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-		-- The user's last hand-set size/pos becomes the new persisted state
-		LG_savedWindowSize = restoreSize
-		LG_savedWindowPos  = restorePos
-	else
-		maximized=true
-		-- Snapshot current size/pos so the next click restores exactly to here
+
+	-- Three-state cycle:
+	--   "saved"     → user's hand-set / current size (or computed default if none)
+	--   "maximized" → fills the screen (minus margin)
+	--   "default"   → recomputed standard size from getWinSize() / getRestPosition()
+	-- Click cycles saved → maximized → default → saved → ...
+	if not LG_greenState then LG_greenState = "saved" end
+
+	if LG_greenState == "saved" then
+		-- Going TO maximized. Snapshot current as the "saved" we'll come back to.
 		LG_preMaxSize = Window.Size
 		LG_preMaxPos  = Window.Position
 		local vp=workspace.CurrentCamera.ViewportSize
@@ -1157,6 +1167,39 @@ trafficButtons[3].MouseButton1Click:Connect(function()
 		local cy = (inset.Y + MARGIN)/s + ah/2
 		tween(Window,0.38,{Size=UDim2.fromOffset(aw,ah),Position=UDim2.new(0.5,0,0,cy)},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
 		tween(Shadow,0.38,{Size=UDim2.fromOffset(aw+80,ah+80),Position=UDim2.new(0.5,0,0,cy)},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		maximized   = true
+		LG_greenState = "maximized"
+
+	elseif LG_greenState == "maximized" then
+		-- Going TO default standard size. Forget any saved override AND any
+		-- pre-maximize custom snapshot, so the cycle from here is a simple
+		-- default ↔ maximized toggle (the user's old custom size is gone).
+		LG_savedWindowSize = nil
+		LG_savedWindowPos  = nil
+		LG_preMaxSize = nil
+		LG_preMaxPos  = nil
+		local w,h = getWinSize()
+		local pos = getRestPosition()
+		tween(Window,0.38,{Size=UDim2.fromOffset(w,h),Position=pos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		tween(Shadow,0.38,{Size=UDim2.fromOffset(w+80,h+80),Position=pos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		maximized   = false
+		LG_greenState = "default"
+
+	else  -- "default"
+		-- Going BACK to user's saved size (the one snapshotted before maximize).
+		local restoreSize = LG_preMaxSize
+		local restorePos  = LG_preMaxPos
+		if not restoreSize or not restorePos then
+			local w,h = getWinSize()
+			restoreSize = UDim2.fromOffset(w,h)
+			restorePos  = getRestPosition()
+		end
+		tween(Window,0.38,{Size=restoreSize,Position=restorePos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		tween(Shadow,0.38,{Size=UDim2.fromOffset(restoreSize.X.Offset+80,restoreSize.Y.Offset+80),Position=restorePos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		LG_savedWindowSize = restoreSize
+		LG_savedWindowPos  = restorePos
+		maximized   = false
+		LG_greenState = "saved"
 	end
 	if hadSearch then
 		-- Reposition after tween completes
