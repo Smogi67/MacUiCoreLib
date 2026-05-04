@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 138
+local LG_VERSION = 139
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -681,6 +681,19 @@ liquidGlass(Window,{radius=18,sheen=true,strokeT=0.45})
 
 -- Responsive size
 local minimized,maximized=false,false
+
+-- ============================================================
+-- PERSISTENT WINDOW / DOCK STATE
+-- ============================================================
+-- These survive across minimize/maximize cycles so the user's
+-- preferred window size, position, and dock icon location are
+-- remembered until the script is reloaded.
+-- ============================================================
+local LG_savedWindowSize = nil  -- UDim2 — last user-set window size
+local LG_savedWindowPos  = nil  -- UDim2 — last user-set window position
+local LG_savedDockPos    = nil  -- UDim2 — last user-set dock icon position
+local LG_preMaxSize      = nil  -- UDim2 — size before maximize, for restore
+local LG_preMaxPos       = nil  -- UDim2 — pos before maximize, for restore
 local function getWinSize()
 	local vp=workspace.CurrentCamera.ViewportSize
 	local inset=GuiService:GetGuiInset()
@@ -711,10 +724,24 @@ local function getRestPosition()
 end
 local function applyWinSize()
 	if maximized or minimized then return end
-	local w,h=getWinSize()
-	local pos=getRestPosition()
-	Window.Size=UDim2.fromOffset(w,h); Shadow.Size=UDim2.fromOffset(w+80,h+80)
-	Window.Position=pos; Shadow.Position=pos
+	local w,h = getWinSize()
+	local pos = getRestPosition()
+	-- If the user has resized or moved the window, prefer their saved values
+	-- over the recomputed defaults (so a viewport change doesn't snap them back).
+	if LG_savedWindowSize then
+		Window.Size = LG_savedWindowSize
+		Shadow.Size = UDim2.fromOffset(LG_savedWindowSize.X.Offset+80, LG_savedWindowSize.Y.Offset+80)
+	else
+		Window.Size = UDim2.fromOffset(w,h)
+		Shadow.Size = UDim2.fromOffset(w+80,h+80)
+	end
+	if LG_savedWindowPos then
+		Window.Position = LG_savedWindowPos
+		Shadow.Position = LG_savedWindowPos
+	else
+		Window.Position = pos
+		Shadow.Position = pos
+	end
 end
 applyWinSize()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
@@ -779,6 +806,134 @@ end
 
 -- Close
 local DockIcon=nil
+
+-- ============================================================
+-- WINDOW DRAG (move by title bar) + CORNER RESIZE HANDLES
+-- ============================================================
+do
+	-- ─── Title bar drag ───────────────────────────────────────
+	local dragging = false
+	local dragStart, startPos
+	local titleConn
+
+	TitleBar.InputBegan:Connect(function(input)
+		if maximized or minimized then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1
+		and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		dragging = true
+		dragStart = input.Position
+		startPos  = Window.Position
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if not dragging then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseMovement
+		and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		local delta = input.Position - dragStart
+		local newPos = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+		Window.Position = newPos
+		Shadow.Position = newPos
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if not dragging then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1
+		and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		dragging = false
+		-- Persist the final position so it survives viewport changes / restores
+		LG_savedWindowPos = Window.Position
+	end)
+
+	-- ─── Corner resize handles ────────────────────────────────
+	-- 4 small invisible squares pinned to each corner of the window.
+	-- Dragging them resizes the window, keeping the opposite corner anchored.
+	local HANDLE_SIZE = 14
+	local MIN_W, MIN_H = 360, 280
+	local handles = {
+		{ name = "TL", anchor = Vector2.new(0,0), pos = UDim2.new(0,0,0,0)            },
+		{ name = "TR", anchor = Vector2.new(1,0), pos = UDim2.new(1,0,0,0)            },
+		{ name = "BL", anchor = Vector2.new(0,1), pos = UDim2.new(0,0,1,0)            },
+		{ name = "BR", anchor = Vector2.new(1,1), pos = UDim2.new(1,0,1,0)            },
+	}
+
+	for _, h in ipairs(handles) do
+		local handle = Instance.new("Frame")
+		handle.Name        = "ResizeHandle_" .. h.name
+		handle.Size        = UDim2.fromOffset(HANDLE_SIZE, HANDLE_SIZE)
+		handle.AnchorPoint = h.anchor
+		handle.Position    = h.pos
+		handle.BackgroundTransparency = 1   -- invisible grab area
+		handle.BorderSizePixel = 0
+		handle.ZIndex = 60                   -- above titlebar but below dropdowns
+		handle.Active = true                 -- absorb input
+		handle.Parent = Window
+
+		local resizing = false
+		local rStart, sStart, pStart
+
+		handle.InputBegan:Connect(function(input)
+			if maximized or minimized then return end
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			resizing = true
+			rStart = input.Position
+			sStart = Window.AbsoluteSize
+			pStart = Window.AbsolutePosition
+		end)
+
+		UserInputService.InputChanged:Connect(function(input)
+			if not resizing then return end
+			if input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			local delta = input.Position - rStart
+			-- Compute new size based on which corner is being dragged.
+			-- BR pulls bottom-right out; TL pulls top-left in/out keeping BR anchored, etc.
+			local nw, nh = sStart.X, sStart.Y
+			local npx, npy = pStart.X, pStart.Y
+			if h.name == "BR" then
+				nw = math.max(MIN_W, sStart.X + delta.X)
+				nh = math.max(MIN_H, sStart.Y + delta.Y)
+			elseif h.name == "BL" then
+				nw = math.max(MIN_W, sStart.X - delta.X)
+				nh = math.max(MIN_H, sStart.Y + delta.Y)
+				npx = pStart.X + (sStart.X - nw)
+			elseif h.name == "TR" then
+				nw = math.max(MIN_W, sStart.X + delta.X)
+				nh = math.max(MIN_H, sStart.Y - delta.Y)
+				npy = pStart.Y + (sStart.Y - nh)
+			elseif h.name == "TL" then
+				nw = math.max(MIN_W, sStart.X - delta.X)
+				nh = math.max(MIN_H, sStart.Y - delta.Y)
+				npx = pStart.X + (sStart.X - nw)
+				npy = pStart.Y + (sStart.Y - nh)
+			end
+
+			-- Window has AnchorPoint(0.5,0.5), so target Position must be the
+			-- centre of the new rect, not its top-left.
+			local centerX = npx + nw/2
+			local centerY = npy + nh/2
+			local newSize = UDim2.fromOffset(nw, nh)
+			local newPos  = UDim2.fromOffset(centerX, centerY)
+			Window.Size     = newSize
+			Window.Position = newPos
+			Shadow.Size     = UDim2.fromOffset(nw+80, nh+80)
+			Shadow.Position = newPos
+		end)
+
+		UserInputService.InputEnded:Connect(function(input)
+			if not resizing then return end
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			resizing = false
+			-- Persist the final size + position
+			LG_savedWindowSize = Window.Size
+			LG_savedWindowPos  = Window.Position
+		end)
+	end
+end
 -- Flag set by the color picker panel to block traffic buttons while open
 local LG_colorPickerOpen = false
 local LG_activeColorPickerClose = nil  -- close fn of the currently open color picker panel
@@ -824,7 +979,8 @@ local function createDockIcon()
 	if DockIcon then DockIcon:Destroy() end
 	DockIcon=Instance.new("ImageButton"); DockIcon.Name="DockIcon"
 	DockIcon.Size=UDim2.fromOffset(56,56); DockIcon.AnchorPoint=Vector2.new(0.5,0.5)
-	DockIcon.Position=UDim2.new(0.5,0,1,-60); DockIcon.BackgroundColor3=T.blue
+	DockIcon.Position = LG_savedDockPos or UDim2.new(0.5,0,1,-60)
+	DockIcon.BackgroundColor3=T.blue
 	DockIcon.BorderSizePixel=0; DockIcon.AutoButtonColor=false; DockIcon.Image=""
 	DockIcon.ZIndex=30; DockIcon.Parent=ScreenGui
 	local corner=Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,14); corner.Parent=DockIcon
@@ -848,7 +1004,12 @@ local function createDockIcon()
 		DockIcon.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
 	end)
 	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
+		if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+			if dragging and moved and DockIcon then
+				LG_savedDockPos = DockIcon.Position  -- persist for next minimize
+			end
+			dragging=false
+		end
 	end)
 	DockIcon.MouseButton1Click:Connect(function()
 		if moved then return end
@@ -884,6 +1045,8 @@ trafficButtons[2].MouseButton1Click:Connect(function()
 	-- Save the current window size/position so we can restore exactly to it
 	local savedSize = Window.Size
 	local savedPos  = Window.Position
+	LG_savedWindowSize = savedSize  -- persist for cross-cycle memory
+	LG_savedWindowPos  = savedPos
 	SRF.Visible = false
 	SearchBox.Text = ""
 	-- Shrink window toward dock icon position with a quick ease-in
@@ -903,7 +1066,8 @@ trafficButtons[2].MouseButton1Click:Connect(function()
 		if DockIcon then DockIcon:Destroy() end
 		DockIcon=Instance.new("ImageButton"); DockIcon.Name="DockIcon"
 		DockIcon.Size=UDim2.fromOffset(56,56); DockIcon.AnchorPoint=Vector2.new(0.5,0.5)
-		DockIcon.Position=UDim2.new(0.5,0,1,-60); DockIcon.BackgroundColor3=T.blue
+		DockIcon.Position = LG_savedDockPos or UDim2.new(0.5,0,1,-60)
+		DockIcon.BackgroundColor3=T.blue
 		DockIcon.BorderSizePixel=0; DockIcon.AutoButtonColor=false; DockIcon.Image=""
 		DockIcon.ZIndex=30; DockIcon.Parent=ScreenGui
 		local corner=Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,14); corner.Parent=DockIcon
@@ -927,7 +1091,12 @@ trafficButtons[2].MouseButton1Click:Connect(function()
 			DockIcon.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
 		end)
 		UserInputService.InputEnded:Connect(function(input)
-			if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
+			if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+				if dragging and moved and DockIcon then
+					LG_savedDockPos = DockIcon.Position  -- persist across minimize cycles
+				end
+				dragging=false
+			end
 		end)
 		DockIcon.MouseButton1Click:Connect(function()
 			if moved then return end
@@ -960,17 +1129,27 @@ trafficButtons[3].MouseButton1Click:Connect(function()
 	local hadSearch = SRF.Visible
 	SRF.Visible = false
 	if maximized then
-		maximized=false; local w,h=getWinSize()
-		local pos=getRestPosition()
-		tween(Window,0.38,{Size=UDim2.fromOffset(w,h),Position=pos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-		tween(Shadow,0.38,{Size=UDim2.fromOffset(w+80,h+80),Position=pos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		maximized=false
+		-- Restore to the size/position the user had before maximizing
+		local restoreSize = LG_preMaxSize
+		local restorePos  = LG_preMaxPos
+		if not restoreSize or not restorePos then
+			local w,h = getWinSize()
+			restoreSize = UDim2.fromOffset(w,h)
+			restorePos  = getRestPosition()
+		end
+		tween(Window,0.38,{Size=restoreSize,Position=restorePos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		tween(Shadow,0.38,{Size=UDim2.fromOffset(restoreSize.X.Offset+80,restoreSize.Y.Offset+80),Position=restorePos},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		-- The user's last hand-set size/pos becomes the new persisted state
+		LG_savedWindowSize = restoreSize
+		LG_savedWindowPos  = restorePos
 	else
 		maximized=true
+		-- Snapshot current size/pos so the next click restores exactly to here
+		LG_preMaxSize = Window.Size
+		LG_preMaxPos  = Window.Position
 		local vp=workspace.CurrentCamera.ViewportSize
 		local inset=GuiService:GetGuiInset()
-		-- vp.X, vp.Y and inset.Y are screen-space pixels. Window.Size is
-		-- interpreted as logical units (under UIScale), so divide by scale.
-		-- MARGIN = clearance from screen edges so the window doesn't touch them.
 		local s = uiScale.Scale
 		local MARGIN = 12
 		local aw = (vp.X - MARGIN*2)/s
