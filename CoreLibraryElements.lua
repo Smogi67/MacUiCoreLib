@@ -68,9 +68,9 @@
     defaultValue  number    0.0 – 1.0 initial position
     callback      function? Called with (newValue: number) on change
 
-  DYNAMIC ISLAND LIVE UPDATES — if your callback calls Notify, NotifyWarning,
-  or NotifyError, the island's accent colour and progress bar colour update
-  live while dragging (e.g. turns yellow when threshold is crossed).
+  DYNAMIC ISLAND LIVE UPDATES — if your callback fires Notify with
+  type "warning" or "error", the island's accent colour and progress
+  bar update live while dragging (e.g. turns yellow above a threshold).
   Returns: control handle with :SetValue(number) / :GetValue()
 
   ─────────────────────────────────────────────────────────
@@ -141,65 +141,49 @@
     • Always include a Cancel button on the left
 
   ─────────────────────────────────────────────────────────
-  LiquidGlass:ShowMultiPrompt(opts)   — Multi-option prompt
+  LiquidGlass:Prompt(opts)   — Modal sheet with action buttons
   ─────────────────────────────────────────────────────────
-  Shows a sheet with a title, body text, and up to three
-  action buttons plus the always-present Cancel.
-  Each button occupies its own full-width row (stacked).
-  Button colours: "blue" (solid accent) or "grey" (neutral).
+  Shows a translucent sheet with a title, body text, and one or
+  more buttons. A Cancel button is always added automatically
+  on the left.
 
   opts fields:
-    title         string    Bold header text
-    body          string    Secondary message text
-    buttons       {table}   Array of button definitions:
-                              { text=string, color="blue"|"grey", callback=function? }
-  Example:
-    LiquidGlass:ShowMultiPrompt({
-        title   = "Are you sure you want to quit this process?",
-        body    = 'Do you really want to quit "Spotify"?',
+    title    string    Bold header text
+    body     string?   Secondary message text
+    buttons  {table}   Array of button definitions:
+                         { text=string, color?="blue"|"red"|"grey", callback=function? }
+                         Defaults to "blue" if no color given.
+    layout   string?   "side"  → buttons sit on a single row
+                       "stack" → each button is a full-width row
+                       Default: "side" for 1 button, "stack" for 2+.
+
+  Common patterns:
+
+    -- Confirmation (replaces old ShowConfirmPrompt)
+    LiquidGlass:Prompt({
+        title   = "Empty Trash automatically?",
+        body    = "Items will be erased after 30 days.",
         buttons = {
-            { text="Quit",       color="blue", callback=function() print("Quit") end },
-            { text="Force Quit", color="grey"  },
+            { text = "Turn On", color = "blue", callback = function() ... end },
         },
     })
 
-  ─────────────────────────────────────────────────────────
-  LiquidGlass:ShowConfirmPrompt(opts)  — Confirmation prompt
-  ─────────────────────────────────────────────────────────
-  Shows a sheet with a title, body text, and two side-by-side
-  buttons: Cancel on the left, a blue confirm button on the right.
-
-  opts fields:
-    title         string    Bold header text
-    body          string    Secondary message text
-    confirmText   string    Label for the blue confirm button  default "OK"
-    onConfirm     function? Called when the confirm button is pressed
-  Example:
-    LiquidGlass:ShowConfirmPrompt({
-        title       = "Are you sure you want to empty Trash automatically?",
-        body        = "Items left in the Trash for more than 30 days will be automatically erased.",
-        confirmText = "Turn On",
-        onConfirm   = function() print("Trash auto-empty enabled") end,
+    -- Destructive warning (replaces old ShowWarningPrompt)
+    LiquidGlass:Prompt({
+        title   = "Delete Search History",
+        body    = "This cannot be undone.",
+        buttons = {
+            { text = "Delete", color = "red", callback = function() ... end },
+        },
     })
 
-  ─────────────────────────────────────────────────────────
-  LiquidGlass:ShowWarningPrompt(opts)  — Destructive warning
-  ─────────────────────────────────────────────────────────
-  Same side-by-side layout as ShowConfirmPrompt. The confirm
-  button has a translucent red background with red text,
-  signalling a destructive or irreversible action.
-
-  opts fields:
-    title         string    Bold header text
-    body          string    Secondary message text
-    confirmText   string    Label for the red confirm button  default "Delete"
-    onConfirm     function? Called when the confirm button is pressed
-  Example:
-    LiquidGlass:ShowWarningPrompt({
-        title       = "Delete Spotlight Search History",
-        body        = "All history associated with Spotlight Search will be deleted.",
-        confirmText = "Delete",
-        onConfirm   = function() print("History cleared") end,
+    -- Multi-option (replaces old ShowMultiPrompt)
+    LiquidGlass:Prompt({
+        title   = "Quit Spotify?",
+        buttons = {
+            { text = "Quit",       color = "blue", callback = function() ... end },
+            { text = "Force Quit", color = "grey", callback = function() ... end },
+        },
     })
 
   ─────────────────────────────────────────────────────────
@@ -212,8 +196,8 @@
                The Dynamic Island opens on press and tracks
                the value live. The progress bar is thicker
                while held, thins back on release.
-               If the callback fires NotifyWarning/NotifyError
-               the island accent updates live as you drag.
+               If the callback fires Notify with type "warning"
+               or "error" the island accent updates live as you drag.
                Switching to another slider collapses the island
                and reopens immediately for the new one.
   Dropdowns  — opens with a spring-expand animation.
@@ -255,106 +239,75 @@
   ─────────────────────────────────────────────────────────
   DYNAMIC ISLAND — OPT-IN PER CONTROL
   ─────────────────────────────────────────────────────────
-  Controls do NOT auto-notify. You opt in per control by
-  passing a notify function as the callback.
+  Controls do NOT auto-notify. To opt in, call Notify from
+  your callback:
 
-  OPTION 1 — Convenience helpers (recommended):
-    LiquidGlass.Notif.Toggle("Label")    → callback for toggles
-    LiquidGlass.Notif.Slider("Label")    → callback for sliders
-    LiquidGlass.Notif.Dropdown("Label")  → callback for dropdowns
-    LiquidGlass.Notif.Button("Label")    → callback for buttons
-
-  Usage:
-    sec:AddToggle("Shadows", true, LiquidGlass.Notif.Toggle("Shadows"))
-    sec:AddSlider("Volume",  0.5,  LiquidGlass.Notif.Slider("Volume"))
-    sec:AddDropdown("Quality", {...}, 1, LiquidGlass.Notif.Dropdown("Quality"))
-    sec:AddButton("Save", "Go", LiquidGlass.Notif.Button("Save"))
-
-  OPTION 2 — Custom callback, call Notify yourself:
     sec:AddToggle("Feature", false, function(on)
-        if on then LiquidGlass:Notify("Enabled", "On")
-        else LiquidGlass:NotifyWarning("Disabled", "Off") end
+        LiquidGlass:Notify({
+            title = on and "Enabled" or "Disabled",
+            value = on and "On" or "Off",
+            type  = on and "default" or "warning",
+        })
     end)
 
-  OPTION 3 — Slider with live threshold colour change:
     sec:AddSlider("Volume", 0.3, function(v)
         if v > 0.8 then
-            LiquidGlass:NotifyWarning("High volume", math.round(v*100).."%")
+            LiquidGlass:Notify({ title = "High volume", value = math.round(v*100).."%", type = "warning" })
         else
-            LiquidGlass:Notify("Volume", math.round(v*100).."%", "slider")
+            LiquidGlass:Notify({ title = "Volume", type = "slider", progress = v })
         end
     end)
-    -- The island accent/progress bar turns yellow above 80% live while dragging.
 
   ─────────────────────────────────────────────────────────
-  LiquidGlass:Notify(label, value?, notifType?)
+  LiquidGlass:Notify(opts)
   ─────────────────────────────────────────────────────────
-  Fire a Dynamic Island notification manually.
-    label     string   Main text shown in the island
-    value     string?  Right-side badge text (optional)
-    notifType string?  Icon/colour style (default "custom"):
-                         "toggle"   green  ◉
-                         "slider"   blue   ≡
-                         "dropdown" blue   ◆
-                         "button"   blue   ▶
-                         "custom"   orange ●
+  Fire a Dynamic Island notification (the small expanding pill
+  at the top of the screen).
+
+  opts fields:
+    title     string   Bold label shown in the island        (required)
+    value     string?  Small badge text on the right side
+    type      string?  Visual style. One of:
+                         "default"  blue
                          "error"    red    X
                          "warning"  yellow !
+                         "toggle"   green  ◉
+                         "slider"   blue   ≡  (with progress bar)
+                         "dropdown" blue   ◆
+                         "button"   blue   ▶
+    progress  number?  0.0 – 1.0. Only used when type=="slider";
+                       fills the progress bar to that fraction.
+
   Examples:
-    LiquidGlass:Notify("Game saved")
-    LiquidGlass:Notify("Round started", "Wave 3")
-    LiquidGlass:Notify("Volume", "72%", "slider")
-
-  ─────────────────────────────────────────────────────────
-  LiquidGlass:NotifySlider(label, pct)
-  ─────────────────────────────────────────────────────────
-  Fire a slider-style Dynamic Island notification with a
-  filled progress bar. Use when setting a slider value from
-  code rather than via a drag interaction.
-    label   string   Text shown in the island
-    pct     number   0.0 – 1.0 fill amount for the progress bar
-  Example:
-    LiquidGlass:NotifySlider("Volume", 0.80)
-
-  ─────────────────────────────────────────────────────────
-  LiquidGlass:NotifyError(label, value?)
-  ─────────────────────────────────────────────────────────
-  Shorthand for a red error notification.
-
-  ─────────────────────────────────────────────────────────
-  LiquidGlass:NotifyWarning(label, value?)
-  ─────────────────────────────────────────────────────────
-  Shorthand for a yellow warning notification.
+    LiquidGlass:Notify({ title = "Game saved" })
+    LiquidGlass:Notify({ title = "Round started", value = "Wave 3" })
+    LiquidGlass:Notify({ title = "Volume", type = "slider", progress = 0.72 })
+    LiquidGlass:Notify({ title = "Error", value = "Code 404", type = "error" })
+    LiquidGlass:Notify({ title = "Heads up", type = "warning" })
 
   ─────────────────────────────────────────────────────────
   LiquidGlass:Notification(opts)
   ─────────────────────────────────────────────────────────
   iOS-style notification card that slides down from the top
   of the screen. Always uses the liquid glass look regardless
-  of the current theme (glass or solid).
+  of the current theme.
 
   Behaviour:
     • Slides in from above with a spring easing
     • Up to 2 cards can be stacked at once
     • A 3rd card pushes the oldest off the top automatically
     • Cards auto-dismiss after `duration` seconds
-    • Swipe left or right ≥ 60 px to manually dismiss early;
-      the card flies off in the drag direction
-    • Short swipes snap back with a bounce
+    • Swipe up to manually dismiss early
 
   opts fields:
     title     string   Bold header line
-    message   string?  Secondary body text (optional)
+    message   string?  Secondary body text
     duration  number?  Seconds before auto-dismiss   default 4
 
   Examples:
     LiquidGlass:Notification({ title = "Saved" })
-    LiquidGlass:Notification({ title = "Download complete", message = "Icons cached successfully." })
-    LiquidGlass:Notification({ title = "Warning", message = "High memory usage.", duration = 6 })
-
-  Note: icon downloads fire Notification automatically — a card appears
-  whenever icons are freshly fetched from GitHub (silent on cache
-  hits, since no download actually occurred).
+    LiquidGlass:Notification({ title = "Download complete", message = "Icons cached." })
+    LiquidGlass:Notification({ title = "Warning", message = "Low disk space.", duration = 6 })
 
   ─────────────────────────────────────────────────────────
   LiquidGlass:Open()  /  LiquidGlass:Close()
@@ -475,7 +428,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 142
+local LG_VERSION = 146
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -992,8 +945,10 @@ trafficButtons[1].MouseButton1Click:Connect(function()
 	end)
 end)
 
--- Minimize
-local function createDockIcon()
+-- Shared dock-icon builder used by the minimize flow.
+-- restoreSize/restorePos = the Window.Size/Position to spring back to when
+-- the user taps the icon. Persists drag position to LG_savedDockPos.
+local function buildDockIcon(restoreSize, restorePos)
 	if DockIcon then DockIcon:Destroy() end
 	DockIcon=Instance.new("ImageButton"); DockIcon.Name="DockIcon"
 	DockIcon.Size=UDim2.fromOffset(56,56); DockIcon.AnchorPoint=Vector2.new(0.5,0.5)
@@ -1008,6 +963,7 @@ local function createDockIcon()
 	local gear=Instance.new("TextLabel"); gear.Size=UDim2.fromScale(1,1); gear.BackgroundTransparency=1
 	gear.Text="⚙"; gear.Font=Enum.Font.GothamBold; gear.TextSize=32
 	gear.TextColor3=Color3.fromRGB(255,255,255); gear.ZIndex=32; gear.Parent=DockIcon
+
 	local dragging,dragStart,startPos,moved=false,nil,nil,false
 	DockIcon.InputBegan:Connect(function(input)
 		if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
@@ -1024,7 +980,7 @@ local function createDockIcon()
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
 			if dragging and moved and DockIcon then
-				LG_savedDockPos = DockIcon.Position  -- persist for next minimize
+				LG_savedDockPos = DockIcon.Position  -- persist across minimize cycles
 			end
 			dragging=false
 		end
@@ -1032,18 +988,22 @@ local function createDockIcon()
 	DockIcon.MouseButton1Click:Connect(function()
 		if moved then return end
 		minimized=false
-		-- Shrink and fade the icon out immediately
 		local icon = DockIcon
 		tween(icon,0.18,{Size=UDim2.fromOffset(0,0),BackgroundTransparency=1},Enum.EasingStyle.Back,Enum.EasingDirection.In)
 		task.delay(0.18,function() if icon then icon:Destroy(); DockIcon=nil end end)
-		-- Restore window
 		Overlay.BackgroundTransparency=1; Blur.Size=0
+		-- Start window at dock-icon size/position, then spring to the
+		-- size/pos the user had before minimizing.
+		Window.Size=UDim2.fromOffset(56,56)
+		Window.Position=UDim2.new(0.5,0,1,-60)
 		Window.BackgroundTransparency=1; Shadow.ImageTransparency=1
+		WindowBackdrop.Size=UDim2.fromOffset(56,56)
+		WindowBackdrop.Position=UDim2.new(0.5,0,1,-60)
+		WindowBackdrop.BackgroundTransparency=1; WindowBackdrop.Visible=true
 		Overlay.Visible=true; Window.Visible=true; Shadow.Visible=true
-		local w,h=getWinSize()
-		local pos=getRestPosition()
-		tween(Window,0.4,{Size=UDim2.fromOffset(w,h),Position=pos,BackgroundTransparency=0.18},Enum.EasingStyle.Back)
-		tween(Shadow,0.4,{Size=UDim2.fromOffset(w+80,h+80),Position=pos,ImageTransparency=0.45})
+		tween(Window,0.45,{Size=restoreSize,Position=restorePos,BackgroundTransparency=0.18},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		tween(WindowBackdrop,0.45,{BackgroundTransparency=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+		tween(Shadow,0.45,{Size=UDim2.fromOffset(restoreSize.X.Offset+80,restoreSize.Y.Offset+80),Position=restorePos,ImageTransparency=0.45},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
 		tween(Overlay,0.4,{BackgroundTransparency=0.15}); tween(Blur,0.3,{Size=24})
 	end)
 	DockIcon.MouseEnter:Connect(function() tween(DockIcon,0.15,{Size=UDim2.fromOffset(62,62)},Enum.EasingStyle.Back) end)
@@ -1080,64 +1040,9 @@ trafficButtons[2].MouseButton1Click:Connect(function()
 		Window.Visible=false; Shadow.Visible=false; WindowBackdrop.Visible=false
 		Window.Size=savedSize; Window.Position=savedPos; Window.BackgroundTransparency=0.18
 		WindowBackdrop.BackgroundTransparency=1
-		-- Build dock icon with a restore closure that goes back to saved state
-		if DockIcon then DockIcon:Destroy() end
-		DockIcon=Instance.new("ImageButton"); DockIcon.Name="DockIcon"
-		DockIcon.Size=UDim2.fromOffset(56,56); DockIcon.AnchorPoint=Vector2.new(0.5,0.5)
-		DockIcon.Position = LG_savedDockPos or UDim2.new(0.5,0,1,-60)
-		DockIcon.BackgroundColor3=T.blue
-		DockIcon.BorderSizePixel=0; DockIcon.AutoButtonColor=false; DockIcon.Image=""
-		DockIcon.ZIndex=30; DockIcon.Parent=ScreenGui
-		local corner=Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,14); corner.Parent=DockIcon
-		local grad=Instance.new("UIGradient"); grad.Rotation=135
-		grad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(80,170,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,100,220))})
-		grad.Parent=DockIcon
-		local gear=Instance.new("TextLabel"); gear.Size=UDim2.fromScale(1,1); gear.BackgroundTransparency=1
-		gear.Text="⚙"; gear.Font=Enum.Font.GothamBold; gear.TextSize=32
-		gear.TextColor3=Color3.fromRGB(255,255,255); gear.ZIndex=32; gear.Parent=DockIcon
-		local dragging,dragStart,startPos,moved=false,nil,nil,false
-		DockIcon.InputBegan:Connect(function(input)
-			if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-				dragging=true; moved=false; dragStart=input.Position; startPos=DockIcon.Position
-			end
-		end)
-		UserInputService.InputChanged:Connect(function(input)
-			if not dragging then return end
-			if input.UserInputType~=Enum.UserInputType.MouseMovement and input.UserInputType~=Enum.UserInputType.Touch then return end
-			local delta=input.Position-dragStart
-			if delta.Magnitude>4 then moved=true end
-			DockIcon.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
-		end)
-		UserInputService.InputEnded:Connect(function(input)
-			if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-				if dragging and moved and DockIcon then
-					LG_savedDockPos = DockIcon.Position  -- persist across minimize cycles
-				end
-				dragging=false
-			end
-		end)
-		DockIcon.MouseButton1Click:Connect(function()
-			if moved then return end
-			minimized=false
-			local icon = DockIcon
-			tween(icon,0.18,{Size=UDim2.fromOffset(0,0),BackgroundTransparency=1},Enum.EasingStyle.Back,Enum.EasingDirection.In)
-			task.delay(0.18,function() if icon then icon:Destroy(); DockIcon=nil end end)
-			Overlay.BackgroundTransparency=1; Blur.Size=0
-			-- Start window at dock icon size/position then spring to saved state
-			Window.Size=UDim2.fromOffset(56,56)
-			Window.Position=UDim2.new(0.5,0,1,-60)
-			Window.BackgroundTransparency=1; Shadow.ImageTransparency=1
-			WindowBackdrop.Size=UDim2.fromOffset(56,56)
-			WindowBackdrop.Position=UDim2.new(0.5,0,1,-60)
-			WindowBackdrop.BackgroundTransparency=1; WindowBackdrop.Visible=true
-			Overlay.Visible=true; Window.Visible=true; Shadow.Visible=true
-			tween(Window,0.45,{Size=savedSize,Position=savedPos,BackgroundTransparency=0.18},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-			tween(WindowBackdrop,0.45,{BackgroundTransparency=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-			tween(Shadow,0.45,{Size=UDim2.fromOffset(savedSize.X.Offset+80,savedSize.Y.Offset+80),Position=savedPos,ImageTransparency=0.45},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-			tween(Overlay,0.4,{BackgroundTransparency=0.15}); tween(Blur,0.3,{Size=24})
-		end)
-		DockIcon.MouseEnter:Connect(function() tween(DockIcon,0.15,{Size=UDim2.fromOffset(62,62)},Enum.EasingStyle.Back) end)
-		DockIcon.MouseLeave:Connect(function() tween(DockIcon,0.15,{Size=UDim2.fromOffset(56,56)}) end)
+		-- Build dock icon. The closure inside captures savedSize/savedPos so
+		-- a click on the icon springs the window back to exactly that state.
+		buildDockIcon(savedSize, savedPos)
 	end)
 end)
 
@@ -1884,11 +1789,11 @@ end
 local function notify(ctrlType, label, value)
 	diNotifyCalled = true
 	-- If the DI is currently showing a slider and a new notify fires for the SAME slider
-	-- (e.g. the slider callback detects a threshold and calls NotifyWarning mid-drag),
+	-- (e.g. the slider callback detects a threshold and calls Notify with type "warning"),
 	-- upgrade the currently-showing DI in place: swap the icon, accent, badge colour,
 	-- and progress bar colour without collapsing/re-expanding.
 	-- Mid-drag upgrade: if a slider DI is already showing and the user's
-	-- callback fires NotifyWarning/NotifyError/Notify(...,"slider"), swap the
+	-- callback fires Notify with type "warning"/"error"/"slider", swap the
 	-- icon/accent/progress colour in place. Match on type, not label, because
 	-- the slider label and the warning label are usually different. This
 	-- prevents diShow's interrupt branch from fading/clearing/re-expanding the
@@ -4829,114 +4734,74 @@ function LiquidGlass:Close()
 	tween(Blur,0.3,{Size=0})
 end
 
-function LiquidGlass:Notify(label, value, notifType)
-	notify(notifType or "custom", label, value)
+-- ── Notify ────────────────────────────────────────────────────
+-- Fire a Dynamic Island notification (the small pill at the top
+-- of the screen that expands and dismisses itself).
+--   opts.title    string   Bold label shown in the island   (required)
+--   opts.value    string?  Small badge text on the right side
+--   opts.type     string?  Visual style. One of:
+--                            "default"  (blue)
+--                            "error"    (red)
+--                            "warning"  (yellow)
+--                            "toggle"   (green/white)
+--                            "slider"   (blue, with progress bar)
+--                            "dropdown" (blue)
+--                            "button"   (blue)
+--   opts.progress number?  0.0–1.0. Only used when type=="slider";
+--                          fills the progress bar to that fraction.
+function LiquidGlass:Notify(opts)
+	if type(opts) ~= "table" then
+		error("LiquidGlass:Notify expects a table — see docs", 2)
+	end
+	local title    = tostring(opts.title or "")
+	local value    = opts.value and tostring(opts.value) or nil
+	local kind     = opts.type or "default"
+	-- Map "default" → "custom" since the internal renderer uses "custom"
+	-- as the generic-blue style key.
+	if kind == "default" then kind = "custom" end
+	if kind == "slider" and opts.progress ~= nil then
+		local pct = math.clamp(tonumber(opts.progress) or 0, 0, 1)
+		diTrackSlider(title, pct, "slider", value or (math.round(pct*100) .. "%"))
+	else
+		notify(kind, title, value)
+	end
 end
 
-function LiquidGlass:NotifyError(label, value)
-	notify("error", label, value)
-end
-
-function LiquidGlass:NotifyWarning(label, value)
-	notify("warning", label, value)
-end
-
--- ── NotifySlider ─────────────────────────────────────────────
--- Fire a slider-style Dynamic Island notification with a filled
--- progress bar. Use this when setting a slider value from code
--- (e.g. a button that sets volume to 80%).
---   label  string   Text shown in the island
---   pct    number   0.0 – 1.0  fill amount for the progress bar
-function LiquidGlass:NotifySlider(label, pct)
-	pct = math.clamp(pct or 0, 0, 1)
-	-- Open / update the island via the same path the drag handler uses,
-	-- so the progress bar is populated correctly.
-	diTrackSlider(label, pct, "slider", math.round(pct * 100) .. "%")
-end
-
--- ── Notification ─────────────────────────────────────────────────────
+-- ── Notification ──────────────────────────────────────────────
 -- iOS-style notification card that slides down from the top.
--- Always glass, max 2 stacked. Swipe to dismiss early.
+-- Always glass; max 2 stacked; swipe up to dismiss early.
 --   opts.title    string   Bold header line
---   opts.message  string?  Body text (optional)
+--   opts.message  string?  Body text
 --   opts.duration number?  Auto-dismiss delay in seconds (default 4)
 function LiquidGlass:Notification(opts)
 	showNotif(opts)
 end
 
--- ── ShowMultiPrompt ──────────────────────────────────────────
--- opts: { title, body, buttons = { {text, color="blue"|"grey", callback?}, ... } }
--- A Cancel button is always added automatically at the bottom.
--- Each button gets its own full-width row (stacked layout).
-function LiquidGlass:ShowMultiPrompt(opts)
-	showPromptSheet({
-		title   = opts.title   or "",
-		body    = opts.body    or "",
-		buttons = opts.buttons or {},
-		layout  = "stack",
-	})
-end
-
--- ── ShowConfirmPrompt ────────────────────────────────────────
--- opts: { title, body, confirmText?, onConfirm? }
--- Cancel on the left, blue confirm button on the right.
-function LiquidGlass:ShowConfirmPrompt(opts)
-	showPromptSheet({
-		title   = opts.title or "",
-		body    = opts.body  or "",
-		buttons = {
-			{ text = opts.confirmText or "OK", color = "blue", callback = opts.onConfirm },
-		},
-		layout  = "side",
-	})
-end
-
--- ── ShowWarningPrompt ────────────────────────────────────────
--- opts: { title, body, confirmText?, onConfirm? }
--- Cancel on the left, red confirm button on the right.
-function LiquidGlass:ShowWarningPrompt(opts)
+-- ── Prompt ────────────────────────────────────────────────────
+-- Show a modal sheet with a title, body, and one or more buttons.
+-- A Cancel button is always added automatically at the bottom-left.
+--   opts.title   string   Bold header
+--   opts.body    string?  Secondary explanation
+--   opts.buttons table    Array of { text, color?, callback? }
+--                         color is "blue" (default) | "red" | "grey"
+--   opts.layout  string?  "side"  → buttons sit on a single row
+--                         "stack" → each button is a full-width row
+--                         Defaults: "side" for 1 button, "stack" for 2+.
+function LiquidGlass:Prompt(opts)
+	if type(opts) ~= "table" then
+		error("LiquidGlass:Prompt expects a table — see docs", 2)
+	end
+	local buttons = opts.buttons or {}
+	local layout = opts.layout
+	if not layout then
+		layout = (#buttons >= 2) and "stack" or "side"
+	end
 	showPromptSheet({
 		title   = opts.title or "",
 		body    = opts.body  or "",
-		buttons = {
-			{ text = opts.confirmText or "Delete", color = "red", callback = opts.onConfirm },
-		},
-		layout  = "side",
+		buttons = buttons,
+		layout  = layout,
 	})
-end
-
-function LiquidGlass:AutoNotif(ctrlType, label, value)
-	-- Pass this as (or call inside) a control callback to opt in to Dynamic Island.
-	-- ctrlType is auto-filled when used via the helper below, or pass manually.
-	notify(ctrlType or "custom", label, value)
-end
-
--- Convenience helpers — pass directly as the callback argument
--- e.g. toggleSec:AddToggle("Shadows", true, LiquidGlass.Notif.Toggle("Shadows"))
-LiquidGlass.Notif = {}
-
-function LiquidGlass.Notif.Toggle(label)
-	return function(val)
-		notify("toggle", label, val and "On" or "Off")
-	end
-end
-
-function LiquidGlass.Notif.Slider(label)
-	return function(val)
-		notify("slider", label, math.round(val*100).."%")
-	end
-end
-
-function LiquidGlass.Notif.Dropdown(label)
-	return function(idx, opt)
-		notify("dropdown", label, opt)
-	end
-end
-
-function LiquidGlass.Notif.Button(label)
-	return function()
-		notify("button", label)
-	end
 end
 
 -- ============================================================
