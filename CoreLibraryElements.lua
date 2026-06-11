@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 142
+local LG_VERSION = 143
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -630,16 +630,23 @@ local LG_ICON_NOTIF  = ""  -- Notification.png (used inside notification cards)
 local LG_ICON_TAB    = ""  -- Tab icons.png (used inside sidebar tab rows)
 
 -- Registry of ImageLabels that need icons assigned once assets load.
--- These are only read ONCE, by loadDIIcons' flush pass. LG_iconsFlushed
--- flips true after that pass (or immediately when getcustomasset is
--- unavailable); from then on builders assign images directly and skip
--- registering, so rebuilt controls no longer grow these arrays forever.
-local LG_iconsFlushed = false
-local LG_ARROW_REFS  = {}  -- chevron ImageLabels
-local LG_CHECK_REFS  = {}  -- {img, selected} entries (per-option checkmarks)
-local LG_SEARCH_REFS = {}  -- search bar icon ImageLabels
-local LG_NOTIF_REFS  = {}  -- notification card icon ImageLabels
-local LG_TAB_REFS    = {}  -- sidebar tab row icon ImageLabels
+-- Only read ONCE, by loadDIIcons' flush pass. .flushed flips true after that
+-- pass (or immediately when getcustomasset is unavailable); from then on
+-- builders assign images directly and skip registering, so rebuilt controls
+-- no longer grow these arrays forever.
+-- NOTE: grouped into ONE table on purpose. The main chunk of this file sits
+-- near Luau's per-function register ceiling (hence the do..end blocks used
+-- elsewhere "so transient locals free their registers"); every top-level
+-- local occupies a register for the rest of the file, and exceeding the
+-- ceiling makes loadstring fail to compile the whole library.
+local LG_ICON_REFS = {
+	flushed = false,
+	arrow  = {},  -- chevron ImageLabels
+	check  = {},  -- {img, selected} entries (per-option checkmarks)
+	search = {},  -- search bar icon ImageLabels
+	notif  = {},  -- notification card icon ImageLabels
+	tab    = {},  -- sidebar tab row icon ImageLabels
+}
 
 local Overlay = Instance.new("Frame")
 Overlay.Size=UDim2.fromScale(1,1); Overlay.BackgroundColor3=Color3.fromRGB(8,10,18)
@@ -1198,7 +1205,7 @@ SearchIco.BackgroundTransparency=1
 -- Only assign Image when non-empty; some executors reject "" as a ContentId.
 if LG_ICON_SEARCH ~= "" then SearchIco.Image=LG_ICON_SEARCH end
 SearchIco.ImageColor3=T.textTertiary; SearchIco.ZIndex=16; SearchIco.Parent=SearchWrap
-if LG_ICON_SEARCH == "" and not LG_iconsFlushed then table.insert(LG_SEARCH_REFS, SearchIco) end
+if LG_ICON_SEARCH == "" and not LG_ICON_REFS.flushed then table.insert(LG_ICON_REFS.search, SearchIco) end
 SearchBox=Instance.new("TextBox"); SearchBox.Size=UDim2.new(1,-32,1,0); SearchBox.AnchorPoint=Vector2.new(0,0)
 SearchBox.Position=UDim2.new(0,28,0,0)
 SearchBox.BackgroundTransparency=1; SearchBox.PlaceholderText="Search"; SearchBox.PlaceholderColor3=T.textTertiary
@@ -1357,7 +1364,7 @@ local function loadDIIcons()
 	if not getcustomasset then
 		-- Executor doesn't support getcustomasset — no flush will ever come,
 		-- so stop builders from registering refs that nothing will read.
-		LG_iconsFlushed = true
+		LG_ICON_REFS.flushed = true
 		return
 	end
 
@@ -1436,34 +1443,34 @@ local function loadDIIcons()
 		end
 	end
 	-- Flush deferred dropdown icon refs now that assets are ready
-	for _, img in ipairs(LG_ARROW_REFS) do
+	for _, img in ipairs(LG_ICON_REFS.arrow) do
 		if img and img.Parent then img.Image = LG_ICON_ARROW end
 	end
-	for _, entry in ipairs(LG_CHECK_REFS) do
+	for _, entry in ipairs(LG_ICON_REFS.check) do
 		if entry.img and entry.img.Parent and entry.selected then
 			entry.img.Image = LG_ICON_CHECK
 		end
 	end
-	for _, img in ipairs(LG_SEARCH_REFS) do
+	for _, img in ipairs(LG_ICON_REFS.search) do
 		if img and img.Parent then img.Image = LG_ICON_SEARCH end
 	end
-	for _, img in ipairs(LG_NOTIF_REFS) do
+	for _, img in ipairs(LG_ICON_REFS.notif) do
 		if img and img.Parent then img.Image = LG_ICON_NOTIF end
 	end
-	for _, img in ipairs(LG_TAB_REFS) do
+	for _, img in ipairs(LG_ICON_REFS.tab) do
 		if img and img.Parent then img.Image = LG_ICON_TAB end
 	end
 	-- The flush above is the only read of these registries. Release the
 	-- accumulated ImageLabel references and stop further registration —
 	-- builders assign images directly from LG_ICON_* once loaded.
 	-- (Set the flag BEFORE showNotif below: showNotif can yield via
-	-- task.wait() and itself registers into LG_NOTIF_REFS when unflushed.)
-	table.clear(LG_ARROW_REFS)
-	table.clear(LG_CHECK_REFS)
-	table.clear(LG_SEARCH_REFS)
-	table.clear(LG_NOTIF_REFS)
-	table.clear(LG_TAB_REFS)
-	LG_iconsFlushed = true
+	-- task.wait() and itself registers into LG_ICON_REFS.notif when unflushed.)
+	table.clear(LG_ICON_REFS.arrow)
+	table.clear(LG_ICON_REFS.check)
+	table.clear(LG_ICON_REFS.search)
+	table.clear(LG_ICON_REFS.notif)
+	table.clear(LG_ICON_REFS.tab)
+	LG_ICON_REFS.flushed = true
 	-- Notification cards for download results (silent on cache hits)
 	if downloadCount > 0 then
 		showNotif({
@@ -2378,7 +2385,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 	chevron.Position=UDim2.new(1,-8,0.5,0); chevron.BackgroundTransparency=1
 	if LG_ICON_ARROW ~= "" then chevron.Image=LG_ICON_ARROW end
 	chevron.ZIndex=17; chevron.Parent=pill
-	if LG_ICON_ARROW == "" and not LG_iconsFlushed then table.insert(LG_ARROW_REFS, chevron) end
+	if LG_ICON_ARROW == "" and not LG_ICON_REFS.flushed then table.insert(LG_ICON_REFS.arrow, chevron) end
 
 	-- Dropdown panel (floats in ScreenGui, solid dark — same style as search results)
 	local panel=Instance.new("Frame")
@@ -2412,7 +2419,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		checkLbl.Image=i==selectedIdx and LG_ICON_CHECK or ""
 		checkLbl.ZIndex=53; checkLbl.Parent=ob
 		local checkRef = {img=checkLbl, selected=(i==selectedIdx)}
-		if LG_ICON_CHECK == "" and not LG_iconsFlushed then table.insert(LG_CHECK_REFS, checkRef) end
+		if LG_ICON_CHECK == "" and not LG_ICON_REFS.flushed then table.insert(LG_ICON_REFS.check, checkRef) end
 		optionBtns[i]={btn=ob,lbl=ol,check=checkLbl,ref=checkRef}
 		ob.MouseEnter:Connect(function() tween(ob,0.08,{BackgroundTransparency=0.55}) end)
 		ob.MouseLeave:Connect(function() tween(ob,0.08,{BackgroundTransparency=1}) end)
@@ -2617,7 +2624,11 @@ end
 -- Shared, stateless colour conversion helpers. Hoisted out of
 -- buildColorPicker (implementations unchanged) so they are compiled once
 -- instead of allocating three fresh closures per picker per tab switch.
-local function colorToHSV(c)
+-- Grouped under one table to spend a single main-chunk register instead of
+-- three (see the register-ceiling note at LG_ICON_REFS).
+local ColorUtil = {}
+
+function ColorUtil.toHSV(c)
 	local r,g,b = c.R, c.G, c.B
 	local maxC = math.max(r,g,b)
 	local minC = math.min(r,g,b)
@@ -2633,7 +2644,7 @@ local function colorToHSV(c)
 	return h, s, v
 end
 
-local function hsvToColor(h,s,v)
+function ColorUtil.fromHSV(h,s,v)
 	local i = math.floor(h*6)
 	local f = h*6 - i
 	local p,q,t = v*(1-s), v*(1-f*s), v*(1-(1-f)*s)
@@ -2646,7 +2657,7 @@ local function hsvToColor(h,s,v)
 	else return Color3.new(v,p,q) end
 end
 
-local function toHex(c)
+function ColorUtil.toHex(c)
 	return string.format("#%02X%02X%02X",
 		math.round(c.R*255), math.round(c.G*255), math.round(c.B*255))
 end
@@ -2657,9 +2668,9 @@ end
 local function buildColorPicker(card, label, defaultColor, callback, rowOrder, divOrder)
 	local currentA = 1
 	local initCol = defaultColor or Color3.fromRGB(1, 109, 238)
-	local currentH, currentS, currentV = colorToHSV(initCol)
+	local currentH, currentS, currentV = ColorUtil.toHSV(initCol)
 
-	local function currentColor() return hsvToColor(currentH, currentS, currentV) end
+	local function currentColor() return ColorUtil.fromHSV(currentH, currentS, currentV) end
 
 	-- ── Row ───────────────────────────────────────────────────
 	local row = Instance.new("Frame")
@@ -2779,7 +2790,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 	local hueKnob=Instance.new("Frame")
 	hueKnob.Size=UDim2.fromOffset(16,16); hueKnob.AnchorPoint=Vector2.new(0.5,0.5)
 	hueKnob.Position=UDim2.new(knobPos(currentH),0,0.5,0)
-	hueKnob.BackgroundColor3=hsvToColor(currentH,1,1)
+	hueKnob.BackgroundColor3=ColorUtil.fromHSV(currentH,1,1)
 	hueKnob.BackgroundTransparency=0; hueKnob.BorderSizePixel=0; hueKnob.ZIndex=197; hueKnob.Parent=hueBar
 	Instance.new("UICorner",hueKnob).CornerRadius=UDim.new(1,0)
 	local hkStr=Instance.new("UIStroke"); hkStr.Color=Color3.new(1,1,1)
@@ -2827,12 +2838,12 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 	vkStr.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; vkStr.Parent=valKnob
 
 	local function updateGradients()
-		local hueCol=hsvToColor(currentH, 1, 1)
+		local hueCol=ColorUtil.fromHSV(currentH, 1, 1)
 		satGrad.Color=ColorSequence.new({
 			ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
 			ColorSequenceKeypoint.new(1, hueCol),
 		})
-		local satCol=hsvToColor(currentH, currentS, 1)
+		local satCol=ColorUtil.fromHSV(currentH, currentS, 1)
 		valGrad.Color=ColorSequence.new({
 			ColorSequenceKeypoint.new(0, Color3.new(0,0,0)),
 			ColorSequenceKeypoint.new(1, satCol),
@@ -2846,7 +2857,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 	local hexLbl=Instance.new("TextBox")
 	hexLbl.Size=UDim2.new(90/PANEL_W,0, btnScaleH,0)
 	hexLbl.Position=UDim2.new(padScaleX,0, btnScaleY,0)
-	hexLbl.BackgroundTransparency=1; hexLbl.Text=toHex(currentColor())
+	hexLbl.BackgroundTransparency=1; hexLbl.Text=ColorUtil.toHex(currentColor())
 	hexLbl.Font=Enum.Font.GothamMedium; hexLbl.TextSize=12
 	hexLbl.TextColor3=T.textSecond; hexLbl.TextXAlignment=Enum.TextXAlignment.Left
 	hexLbl.ClearTextOnFocus=false; hexLbl.PlaceholderText="#RRGGBB"
@@ -2855,20 +2866,20 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 	-- Apply hex input on focus lost or Enter
 	local function applyHexInput()
 		local raw = hexLbl.Text:gsub("#",""):gsub("%s",""):upper()
-		if raw == "" then hexLbl.Text = toHex(currentColor()); return end
+		if raw == "" then hexLbl.Text = ColorUtil.toHex(currentColor()); return end
 		if #raw == 6 and raw:match("^%x+$") then
 			local r = tonumber(raw:sub(1,2),16)/255
 			local g = tonumber(raw:sub(3,4),16)/255
 			local b = tonumber(raw:sub(5,6),16)/255
-			currentH, currentS, currentV = colorToHSV(Color3.new(r,g,b))
+			currentH, currentS, currentV = ColorUtil.toHSV(Color3.new(r,g,b))
 			syncDisplay()
 			-- Always push the new hex to the DI regardless of open/dismiss state
-			notify("custom", label, toHex(currentColor()))
+			notify("custom", label, ColorUtil.toHex(currentColor()))
 			if diDismissThread then task.cancel(diDismissThread); diDismissThread = nil end
 			if diCollapseThread then task.cancel(diCollapseThread); diCollapseThread = nil end
 		else
 			-- Invalid input: restore current hex
-			hexLbl.Text = toHex(currentColor())
+			hexLbl.Text = ColorUtil.toHex(currentColor())
 		end
 	end
 	hexLbl.FocusLost:Connect(applyHexInput)
@@ -2906,23 +2917,23 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 		colorDot.BackgroundColor3=col
 		-- Update all knob positions so hex input and any other trigger stays in sync
 		hueKnob.Position=UDim2.new(knobPos(currentH),0,0.5,0)
-		hueKnob.BackgroundColor3=hsvToColor(currentH,1,1)
+		hueKnob.BackgroundColor3=ColorUtil.fromHSV(currentH,1,1)
 		satKnob.Position=UDim2.new(knobPos(currentS),0,0.5,0)
 		valKnob.Position=UDim2.new(knobPos(currentV),0,0.5,0)
 		hexSyncLock = true
-		hexLbl.Text=toHex(col)
+		hexLbl.Text=ColorUtil.toHex(col)
 		hexSyncLock = false
 		updateGradients()
 		-- Keep DI badge in sync with current hex while panel is open
 		if open then
 			if DI_SHOWING and diCurrentLabel == label then
 				-- Island already open for this picker: update badge in place
-				diBadgeLbl.Text = toHex(col)
+				diBadgeLbl.Text = ColorUtil.toHex(col)
 				if diDismissThread then task.cancel(diDismissThread); diDismissThread = nil end
 				if diCollapseThread then task.cancel(diCollapseThread); diCollapseThread = nil end
 			elseif not DI_SHOWING then
 				-- Island collapsed (e.g. dismiss fired before cancel ran): reopen it
-				notify("custom", label, toHex(col))
+				notify("custom", label, ColorUtil.toHex(col))
 				if diDismissThread then task.cancel(diDismissThread); diDismissThread = nil end
 				if diCollapseThread then task.cancel(diCollapseThread); diCollapseThread = nil end
 			end
@@ -2959,7 +2970,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 		local tp=hueBar.AbsolutePosition; local ts=hueBar.AbsoluteSize
 		currentH=math.clamp((inputPos.X-tp.X)/ts.X,0,1)
 		hueKnob.Position=UDim2.new(knobPos(currentH),0,0.5,0)
-		hueKnob.BackgroundColor3=hsvToColor(currentH,1,1)
+		hueKnob.BackgroundColor3=ColorUtil.fromHSV(currentH,1,1)
 		syncDisplay()
 		dragMoved=true
 		local col=currentColor()
@@ -3088,7 +3099,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 		LG_activeColorPickerClose=closePanel
 		scrollAnchorY=ContentScroll.CanvasPosition.Y
 		-- Show Dynamic Island for the duration the panel is open
-		diShow("custom", label, toHex(currentColor()))
+		diShow("custom", label, ColorUtil.toHex(currentColor()))
 		-- Cancel the auto-dismiss after expand finishes so it stays until the panel closes
 		task.delay(DI_EXPAND_TIME + 0.15, function()
 			if open and diCurrentLabel == label then
@@ -3106,7 +3117,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 			TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 			{Size=UDim2.fromOffset(PANEL_W,PANEL_H)}):Play()
 		hueKnob.Position=UDim2.new(knobPos(currentH),0,0.5,0)
-		hueKnob.BackgroundColor3=hsvToColor(currentH,1,1)
+		hueKnob.BackgroundColor3=ColorUtil.fromHSV(currentH,1,1)
 		satKnob.Position=UDim2.new(knobPos(currentS),0,0.5,0)
 		valKnob.Position=UDim2.new(knobPos(currentV),0,0.5,0)
 		syncDisplay()
@@ -3196,7 +3207,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 			stopEyedropper()
 			PromptBlocker.Visible=false
 			if col then
-				local h, s, v = colorToHSV(col)
+				local h, s, v = ColorUtil.toHSV(col)
 				currentH = h; currentS = s; currentV = v
 				syncDisplay(); refreshAll()
 			end
@@ -3298,11 +3309,11 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 	return {
 		GetValue = function() return currentColor(), currentA end,
 		SetValue = function(_, col, alpha)
-			currentH, currentS, currentV = colorToHSV(col)
+			currentH, currentS, currentV = ColorUtil.toHSV(col)
 			if alpha then currentA = math.clamp(alpha, 0, 1) end
 			if open then
 				hueKnob.Position=UDim2.new(knobPos(currentH),0,0.5,0)
-				hueKnob.BackgroundColor3=hsvToColor(currentH,1,1)
+				hueKnob.BackgroundColor3=ColorUtil.fromHSV(currentH,1,1)
 				satKnob.Position=UDim2.new(knobPos(currentS),0,0.5,0)
 				valKnob.Position=UDim2.new(knobPos(currentV),0,0.5,0)
 			end
@@ -3344,7 +3355,7 @@ local function buildSidebarRow(tabName, _iconName, subText)
 	tabIco.BackgroundTransparency=1; tabIco.ImageColor3=Color3.fromRGB(255,255,255)
 	tabIco.ZIndex=17; tabIco.Parent=iconBg
 	if LG_ICON_TAB ~= "" then tabIco.Image=LG_ICON_TAB end
-	if LG_ICON_TAB == "" and not LG_iconsFlushed then table.insert(LG_TAB_REFS, tabIco) end
+	if LG_ICON_TAB == "" and not LG_ICON_REFS.flushed then table.insert(LG_ICON_REFS.tab, tabIco) end
 
 	local lbl=Instance.new("TextLabel"); lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium
 	lbl.TextSize=13; lbl.TextColor3=T.textPrimary; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=16
@@ -5221,7 +5232,7 @@ showNotif = function(opts)
 	notifIcon.ZIndex = 51
 	notifIcon.Parent = card
 	if LG_ICON_NOTIF ~= "" then notifIcon.Image = LG_ICON_NOTIF end
-	if LG_ICON_NOTIF == "" and not LG_iconsFlushed then table.insert(LG_NOTIF_REFS, notifIcon) end
+	if LG_ICON_NOTIF == "" and not LG_ICON_REFS.flushed then table.insert(LG_ICON_REFS.notif, notifIcon) end
 
 	local titleLbl = Instance.new("TextLabel")
 	titleLbl.Size = UDim2.new(1, -52, 0, 18)
