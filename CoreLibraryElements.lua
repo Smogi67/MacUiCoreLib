@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 141
+local LG_VERSION = 142
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -608,7 +608,9 @@ local function updateScale()
 	end
 end
 updateScale()
-workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+-- (Resize handling is connected once below, after applyWinSize is defined —
+--  that handler calls updateScale() first, so a second connection here would
+--  just run updateScale twice per viewport change.)
 
 local Blur = Instance.new("BlurEffect"); Blur.Name="LGBlur"; Blur.Size=0; Blur.Parent=Lighting
 
@@ -628,6 +630,11 @@ local LG_ICON_NOTIF  = ""  -- Notification.png (used inside notification cards)
 local LG_ICON_TAB    = ""  -- Tab icons.png (used inside sidebar tab rows)
 
 -- Registry of ImageLabels that need icons assigned once assets load.
+-- These are only read ONCE, by loadDIIcons' flush pass. LG_iconsFlushed
+-- flips true after that pass (or immediately when getcustomasset is
+-- unavailable); from then on builders assign images directly and skip
+-- registering, so rebuilt controls no longer grow these arrays forever.
+local LG_iconsFlushed = false
 local LG_ARROW_REFS  = {}  -- chevron ImageLabels
 local LG_CHECK_REFS  = {}  -- {img, selected} entries (per-option checkmarks)
 local LG_SEARCH_REFS = {}  -- search bar icon ImageLabels
@@ -704,7 +711,9 @@ local function getWinSize()
 		-- The 760 desktop cap is meaningless once UIScale has already shrunk UI.
 		local usableY = vp.Y - inset.Y
 		local maxH = (usableY*0.92)/s
-		return math.clamp((vp.X*0.84)/s,520,1080), math.clamp((usableY*0.84)/s,420,maxH)
+		-- math.clamp errors when max < min; floor maxH at 420 so an extreme
+		-- viewport can't crash the boot path.
+		return math.clamp((vp.X*0.84)/s,520,1080), math.clamp((usableY*0.84)/s,420,math.max(420,maxH))
 	else
 		-- Desktop / iPad path: identical to v97 — do not touch iPad behavior.
 		return math.clamp(vp.X*0.84,520,1080), math.clamp(vp.Y*0.84,420,760)
@@ -993,62 +1002,9 @@ trafficButtons[1].MouseButton1Click:Connect(function()
 end)
 
 -- Minimize
-local function createDockIcon()
-	if DockIcon then DockIcon:Destroy() end
-	DockIcon=Instance.new("ImageButton"); DockIcon.Name="DockIcon"
-	DockIcon.Size=UDim2.fromOffset(56,56); DockIcon.AnchorPoint=Vector2.new(0.5,0.5)
-	DockIcon.Position = LG_savedDockPos or UDim2.new(0.5,0,1,-60)
-	DockIcon.BackgroundColor3=T.blue
-	DockIcon.BorderSizePixel=0; DockIcon.AutoButtonColor=false; DockIcon.Image=""
-	DockIcon.ZIndex=30; DockIcon.Parent=ScreenGui
-	local corner=Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,14); corner.Parent=DockIcon
-	local grad=Instance.new("UIGradient"); grad.Rotation=135
-	grad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(80,170,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,100,220))})
-	grad.Parent=DockIcon
-	local gear=Instance.new("TextLabel"); gear.Size=UDim2.fromScale(1,1); gear.BackgroundTransparency=1
-	gear.Text="⚙"; gear.Font=Enum.Font.GothamBold; gear.TextSize=32
-	gear.TextColor3=Color3.fromRGB(255,255,255); gear.ZIndex=32; gear.Parent=DockIcon
-	local dragging,dragStart,startPos,moved=false,nil,nil,false
-	DockIcon.InputBegan:Connect(function(input)
-		if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-			dragging=true; moved=false; dragStart=input.Position; startPos=DockIcon.Position
-		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-		if not dragging then return end
-		if input.UserInputType~=Enum.UserInputType.MouseMovement and input.UserInputType~=Enum.UserInputType.Touch then return end
-		local delta=input.Position-dragStart
-		if delta.Magnitude>4 then moved=true end
-		DockIcon.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-			if dragging and moved and DockIcon then
-				LG_savedDockPos = DockIcon.Position  -- persist for next minimize
-			end
-			dragging=false
-		end
-	end)
-	DockIcon.MouseButton1Click:Connect(function()
-		if moved then return end
-		minimized=false
-		-- Shrink and fade the icon out immediately
-		local icon = DockIcon
-		tween(icon,0.18,{Size=UDim2.fromOffset(0,0),BackgroundTransparency=1},Enum.EasingStyle.Back,Enum.EasingDirection.In)
-		task.delay(0.18,function() if icon then icon:Destroy(); DockIcon=nil end end)
-		-- Restore window
-		Overlay.BackgroundTransparency=1; Blur.Size=0
-		Window.BackgroundTransparency=1; Shadow.ImageTransparency=1
-		Overlay.Visible=true; Window.Visible=true; Shadow.Visible=true
-		local w,h=getWinSize()
-		local pos=getRestPosition()
-		tween(Window,0.4,{Size=UDim2.fromOffset(w,h),Position=pos,BackgroundTransparency=0.18},Enum.EasingStyle.Back)
-		tween(Shadow,0.4,{Size=UDim2.fromOffset(w+80,h+80),Position=pos,ImageTransparency=0.45})
-		tween(Overlay,0.4,{BackgroundTransparency=0.15}); tween(Blur,0.3,{Size=24})
-	end)
-	DockIcon.MouseEnter:Connect(function() tween(DockIcon,0.15,{Size=UDim2.fromOffset(62,62)},Enum.EasingStyle.Back) end)
-	DockIcon.MouseLeave:Connect(function() tween(DockIcon,0.15,{Size=UDim2.fromOffset(56,56)}) end)
-end
+-- (Dead helper createDockIcon removed in v142 — it was never called;
+--  the minimize handler below builds the dock icon inline with its own
+--  saved-size restore behavior.)
 
 
 
@@ -1068,7 +1024,6 @@ trafficButtons[2].MouseButton1Click:Connect(function()
 	SRF.Visible = false
 	SearchBox.Text = ""
 	-- Shrink window toward dock icon position with a quick ease-in
-	local vp = workspace.CurrentCamera.ViewportSize
 	local dockPos = UDim2.new(0.5, 0, 1, -60)
 	tween(Window, 0.32, {Size=UDim2.fromOffset(56,56), Position=dockPos, BackgroundTransparency=1}, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 	tween(WindowBackdrop, 0.20, {BackgroundTransparency=1})
@@ -1243,7 +1198,7 @@ SearchIco.BackgroundTransparency=1
 -- Only assign Image when non-empty; some executors reject "" as a ContentId.
 if LG_ICON_SEARCH ~= "" then SearchIco.Image=LG_ICON_SEARCH end
 SearchIco.ImageColor3=T.textTertiary; SearchIco.ZIndex=16; SearchIco.Parent=SearchWrap
-table.insert(LG_SEARCH_REFS, SearchIco)
+if LG_ICON_SEARCH == "" and not LG_iconsFlushed then table.insert(LG_SEARCH_REFS, SearchIco) end
 SearchBox=Instance.new("TextBox"); SearchBox.Size=UDim2.new(1,-32,1,0); SearchBox.AnchorPoint=Vector2.new(0,0)
 SearchBox.Position=UDim2.new(0,28,0,0)
 SearchBox.BackgroundTransparency=1; SearchBox.PlaceholderText="Search"; SearchBox.PlaceholderColor3=T.textTertiary
@@ -1399,7 +1354,12 @@ local DI_TYPE_ICON = {
 -- Fetch and cache DI icons from GitHub on boot.
 -- Icons are stored locally via writefile so they persist across restarts.
 local function loadDIIcons()
-	if not getcustomasset then return end  -- executor doesn't support getcustomasset
+	if not getcustomasset then
+		-- Executor doesn't support getcustomasset — no flush will ever come,
+		-- so stop builders from registering refs that nothing will read.
+		LG_iconsFlushed = true
+		return
+	end
 
 	local ICON_DIR = "LiquidGlassIcons"
 	local ICON_MAP = {
@@ -1418,12 +1378,11 @@ local function loadDIIcons()
 	}
 	local GITHUB_BASE = "https://raw.githubusercontent.com/Smogi67/MacUiCoreLib/main/Icons"
 
-	-- Create the icons folder using makefolder (writefile cannot create dirs)
+	-- Create the icons folder using makefolder (writefile cannot create dirs).
+	-- Create unless isfolder exists AND confirms the dir is already there.
 	if makefolder then
 		pcall(function()
-			if isfolder and not isfolder(ICON_DIR) then
-				makefolder(ICON_DIR)
-			elseif not isfolder then
+			if not (isfolder and isfolder(ICON_DIR)) then
 				makefolder(ICON_DIR)
 			end
 		end)
@@ -1494,6 +1453,17 @@ local function loadDIIcons()
 	for _, img in ipairs(LG_TAB_REFS) do
 		if img and img.Parent then img.Image = LG_ICON_TAB end
 	end
+	-- The flush above is the only read of these registries. Release the
+	-- accumulated ImageLabel references and stop further registration —
+	-- builders assign images directly from LG_ICON_* once loaded.
+	-- (Set the flag BEFORE showNotif below: showNotif can yield via
+	-- task.wait() and itself registers into LG_NOTIF_REFS when unflushed.)
+	table.clear(LG_ARROW_REFS)
+	table.clear(LG_CHECK_REFS)
+	table.clear(LG_SEARCH_REFS)
+	table.clear(LG_NOTIF_REFS)
+	table.clear(LG_TAB_REFS)
+	LG_iconsFlushed = true
 	-- Notification cards for download results (silent on cache hits)
 	if downloadCount > 0 then
 		showNotif({
@@ -1596,6 +1566,34 @@ diHitbox.Size=UDim2.fromScale(1,1); diHitbox.BackgroundTransparency=1
 diHitbox.Text=""; diHitbox.AutoButtonColor=false
 diHitbox.ZIndex=110; diHitbox.Parent=DI_Frame
 
+-- ── Dismiss / show state ─────────────────────────────────────
+-- NOTE: these MUST be declared before diRestoreSize / the hover handlers
+-- below. Previously they were declared after, so those closures captured
+-- nil globals instead — diIsCollapsing never locked hovers, and hover-leave
+-- on an expanded island shrank it to a dot (diCurrentTotalW read as nil).
+local diDismissThread  = nil
+local diCollapseThread = nil
+local diExpandTextTask = nil  -- task.delay for revealing text after expand
+local diExpandJigTask  = nil  -- task.delay for progress bar jiggle after expand
+local diHideThread     = nil  -- task.delay for final diHide() after collapse
+local diCurrentLabel   = nil
+local diCurrentType    = nil  -- current DI type: "slider"/"warning"/"error"/etc.
+local diCurrentTotalW  = 190
+local diOpening        = false  -- true while expand animation is in progress
+local diIsCollapsing   = false  -- locks hover interactions while closing
+
+-- ── Slider progress bar painter ──────────────────────────────
+-- Single source of truth for filling diProgress; replaces five identical
+-- inline copies in notify / diTrackSlider / buildSlider.
+local function diPaintProgress(pct)
+	local innerW = math.max(0, pct * (diCurrentTotalW - 28))
+	diProgress.Visible = true
+	diProgress.AnchorPoint = Vector2.new(0, 1)
+	diProgress.Position = UDim2.new(0, 14, 1, -4)
+	local thickness = (activeDragLabel ~= nil) and 5 or 3
+	diProgress.Size = UDim2.fromOffset(innerW, thickness)
+end
+
 local function diRestoreSize()
 	if diIsCollapsing then return end
 	local targetW = DI_SHOWING and diCurrentTotalW or DI_DOT
@@ -1613,18 +1611,6 @@ diHitbox.MouseLeave:Connect(function()
 	if activeDragLabel ~= nil then return end
 	diRestoreSize()
 end)
-
--- ── Dismiss / show logic ─────────────────────────────────────
-local diDismissThread  = nil
-local diCollapseThread = nil
-local diExpandTextTask = nil  -- task.delay for revealing text after expand
-local diExpandJigTask  = nil  -- task.delay for progress bar jiggle after expand
-local diHideThread     = nil  -- task.delay for final diHide() after collapse
-local diCurrentLabel   = nil
-local diCurrentType    = nil  -- current DI type: "slider"/"warning"/"error"/etc.
-local diCurrentTotalW  = 190
-local diOpening        = false  -- true while expand animation is in progress
-local diIsCollapsing   = false  -- locks hover interactions while closing
 
 diClearContent = function()
 	diIcon.Image = ""
@@ -1848,12 +1834,7 @@ local function diTrackSlider(label, pct, ctrlType, badgeText, noProg)
 		if diCollapseThread then task.cancel(diCollapseThread); diCollapseThread = nil end
 		diBadgeLbl.Text = badgeText
 		if not noProg then
-			local innerW = math.max(0, pct * (diCurrentTotalW - 28))
-			diProgress.Visible = true
-			diProgress.AnchorPoint = Vector2.new(0, 1)
-			diProgress.Position = UDim2.new(0, 14, 1, -4)
-			local thickness = (activeDragLabel ~= nil) and 5 or 3
-				diProgress.Size = UDim2.fromOffset(innerW, thickness)
+			diPaintProgress(pct)
 		end
 		diDismissThread = task.delay(DI_HOLD_TIME, diDismiss)
 	elseif diCurrentLabel ~= label and not diOpening then
@@ -1909,13 +1890,7 @@ local function notify(ctrlType, label, value)
 			if ctrlType == "slider" then
 				local numStr = string.match(value, "(%d+)%%")
 				if numStr then
-					local pct = math.clamp(tonumber(numStr) / 100, 0, 1)
-					local innerW = math.max(0, pct * (diCurrentTotalW - 28))
-					diProgress.Visible = true
-					diProgress.AnchorPoint = Vector2.new(0, 1)
-					diProgress.Position = UDim2.new(0, 14, 1, -4)
-					local thickness = (activeDragLabel ~= nil) and 5 or 3
-				diProgress.Size = UDim2.fromOffset(innerW, thickness)
+					diPaintProgress(math.clamp(tonumber(numStr) / 100, 0, 1))
 				end
 			end
 		end
@@ -1935,13 +1910,7 @@ local function notify(ctrlType, label, value)
 			if ctrlType == "slider" then
 				local numStr = string.match(value, "(%d+)%%")
 				if numStr then
-					local pct = math.clamp(tonumber(numStr) / 100, 0, 1)
-					local innerW = math.max(0, pct * (diCurrentTotalW - 28))
-					diProgress.Visible = true
-					diProgress.AnchorPoint = Vector2.new(0, 1)
-					diProgress.Position = UDim2.new(0, 14, 1, -4)
-					local thickness = (activeDragLabel ~= nil) and 5 or 3
-				diProgress.Size = UDim2.fromOffset(innerW, thickness)
+					diPaintProgress(math.clamp(tonumber(numStr) / 100, 0, 1))
 				end
 			end
 		end
@@ -2212,12 +2181,7 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 			if callback then
 				if (DI_SHOWING or diCurrentLabel ~= nil) and diCurrentLabel == label then
 					diBadgeLbl.Text = math.round(val*100).."%"
-					local innerW = math.max(0, val * (diCurrentTotalW - 28))
-					diProgress.Visible = true
-					diProgress.AnchorPoint = Vector2.new(0, 1)
-					diProgress.Position = UDim2.new(0, 14, 1, -4)
-					local thickness = (activeDragLabel ~= nil) and 5 or 3
-				diProgress.Size = UDim2.fromOffset(innerW, thickness)
+					diPaintProgress(val)
 					if diDismissThread  then task.cancel(diDismissThread);  diDismissThread  = nil end
 					if diCollapseThread then task.cancel(diCollapseThread); diCollapseThread = nil end
 					diDismissThread = task.delay(DI_HOLD_TIME, diDismiss)
@@ -2278,11 +2242,7 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 		if callback then
 			if (DI_SHOWING or diCurrentLabel ~= nil) and diCurrentLabel == label then
 				diBadgeLbl.Text = math.round(val*100).."%"
-				local innerW = math.max(0, val * (diCurrentTotalW - 28))
-				diProgress.Visible = true
-				diProgress.AnchorPoint = Vector2.new(0, 1)
-				diProgress.Position = UDim2.new(0, 14, 1, -4)
-				diProgress.Size = UDim2.fromOffset(innerW, 5)
+				diPaintProgress(val)  -- activeDragLabel is set here, so thickness resolves to 5
 				if diDismissThread  then task.cancel(diDismissThread);  diDismissThread  = nil end
 				if diCollapseThread then task.cancel(diCollapseThread); diCollapseThread = nil end
 				diDismissThread = task.delay(DI_HOLD_TIME, diDismiss)
@@ -2416,9 +2376,9 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 	pillLbl.ZIndex=17; pillLbl.Parent=pill
 	local chevron=Instance.new("ImageLabel"); chevron.Size=UDim2.fromOffset(16,16); chevron.AnchorPoint=Vector2.new(1,0.5)
 	chevron.Position=UDim2.new(1,-8,0.5,0); chevron.BackgroundTransparency=1
-	chevron.Image=LG_ICON_ARROW
+	if LG_ICON_ARROW ~= "" then chevron.Image=LG_ICON_ARROW end
 	chevron.ZIndex=17; chevron.Parent=pill
-	table.insert(LG_ARROW_REFS, chevron)
+	if LG_ICON_ARROW == "" and not LG_iconsFlushed then table.insert(LG_ARROW_REFS, chevron) end
 
 	-- Dropdown panel (floats in ScreenGui, solid dark — same style as search results)
 	local panel=Instance.new("Frame")
@@ -2452,7 +2412,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		checkLbl.Image=i==selectedIdx and LG_ICON_CHECK or ""
 		checkLbl.ZIndex=53; checkLbl.Parent=ob
 		local checkRef = {img=checkLbl, selected=(i==selectedIdx)}
-		table.insert(LG_CHECK_REFS, checkRef)
+		if LG_ICON_CHECK == "" and not LG_iconsFlushed then table.insert(LG_CHECK_REFS, checkRef) end
 		optionBtns[i]={btn=ob,lbl=ol,check=checkLbl,ref=checkRef}
 		ob.MouseEnter:Connect(function() tween(ob,0.08,{BackgroundTransparency=0.55}) end)
 		ob.MouseLeave:Connect(function() tween(ob,0.08,{BackgroundTransparency=1}) end)
@@ -2579,13 +2539,28 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 	end)
 
 	-- Close when clicking elsewhere
-	UserInputService.InputBegan:Connect(function(input,gp)
+	local ddOutsideConn = UserInputService.InputBegan:Connect(function(input,gp)
 		if not gp and open and input.UserInputType==Enum.UserInputType.MouseButton1 then
 			task.defer(function()
 				if open then
 					closePanel()
 				end
 			end)
+		end
+	end)
+
+	-- Teardown: selectPage destroys rows on every tab switch, but the panel
+	-- lives in ScreenGui and the outside-click listener is on UserInputService,
+	-- so neither dies with the row. Without this, each tab switch leaked one
+	-- panel (plus all its option buttons) and one global input connection.
+	row.AncestryChanged:Connect(function()
+		if not row.Parent then
+			ddOutsideConn:Disconnect()
+			if activeDropdown == panel then
+				activeDropdown = nil
+				activeDropdownClose = nil
+			end
+			panel:Destroy()
 		end
 	end)
 
@@ -2639,52 +2614,52 @@ local function buildButton(card, label, btnText, callback, rowOrder, divOrder)
 end
 
 -- ── Color Picker ─────────────────────────────────────────────
+-- Shared, stateless colour conversion helpers. Hoisted out of
+-- buildColorPicker (implementations unchanged) so they are compiled once
+-- instead of allocating three fresh closures per picker per tab switch.
+local function colorToHSV(c)
+	local r,g,b = c.R, c.G, c.B
+	local maxC = math.max(r,g,b)
+	local minC = math.min(r,g,b)
+	local delta = maxC - minC
+	local h,s,v = 0, 0, maxC
+	if maxC > 0 then s = delta/maxC end
+	if delta > 0 then
+		if maxC == r then h = (g-b)/delta % 6
+		elseif maxC == g then h = (b-r)/delta + 2
+		else h = (r-g)/delta + 4 end
+		h = h/6
+	end
+	return h, s, v
+end
+
+local function hsvToColor(h,s,v)
+	local i = math.floor(h*6)
+	local f = h*6 - i
+	local p,q,t = v*(1-s), v*(1-f*s), v*(1-(1-f)*s)
+	i = i % 6
+	if i==0 then return Color3.new(v,t,p)
+	elseif i==1 then return Color3.new(q,v,p)
+	elseif i==2 then return Color3.new(p,v,t)
+	elseif i==3 then return Color3.new(p,q,v)
+	elseif i==4 then return Color3.new(t,p,v)
+	else return Color3.new(v,p,q) end
+end
+
+local function toHex(c)
+	return string.format("#%02X%02X%02X",
+		math.round(c.R*255), math.round(c.G*255), math.round(c.B*255))
+end
 -- Row with a "Choose Color" button (circle indicator + label).
 -- Opens a floating panel: hue bar, saturation bar, brightness bar.
 -- All panel children use Scale positions so they expand with the
 -- spring animation instead of clipping from the top-left corner.
 local function buildColorPicker(card, label, defaultColor, callback, rowOrder, divOrder)
-	local currentH, currentS, currentV = 0, 1, 1
-	local currentA = 1  
-
-	local function colorToHSV(c)
-		local r,g,b = c.R, c.G, c.B
-		local maxC = math.max(r,g,b)
-		local minC = math.min(r,g,b)
-		local delta = maxC - minC
-		local h,s,v = 0, 0, maxC
-		if maxC > 0 then s = delta/maxC end
-		if delta > 0 then
-			if maxC == r then h = (g-b)/delta % 6
-			elseif maxC == g then h = (b-r)/delta + 2
-			else h = (r-g)/delta + 4 end
-			h = h/6
-		end
-		return h, s, v
-	end
-
-	local function hsvToColor(h,s,v)
-		local i = math.floor(h*6)
-		local f = h*6 - i
-		local p,q,t = v*(1-s), v*(1-f*s), v*(1-(1-f)*s)
-		i = i % 6
-		if i==0 then return Color3.new(v,t,p)
-		elseif i==1 then return Color3.new(q,v,p)
-		elseif i==2 then return Color3.new(p,v,t)
-		elseif i==3 then return Color3.new(p,q,v)
-		elseif i==4 then return Color3.new(t,p,v)
-		else return Color3.new(v,p,q) end
-	end
-
+	local currentA = 1
 	local initCol = defaultColor or Color3.fromRGB(1, 109, 238)
-	currentH, currentS, currentV = colorToHSV(initCol)
+	local currentH, currentS, currentV = colorToHSV(initCol)
 
 	local function currentColor() return hsvToColor(currentH, currentS, currentV) end
-
-	local function toHex(c)
-		return string.format("#%02X%02X%02X",
-			math.round(c.R*255), math.round(c.G*255), math.round(c.B*255))
-	end
 
 	-- ── Row ───────────────────────────────────────────────────
 	local row = Instance.new("Frame")
@@ -3072,13 +3047,10 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 		ContentScroll.ScrollingEnabled=true
 	end)
 
-	row.AncestryChanged:Connect(function()
-		if not row.Parent then
-			moveConn:Disconnect()
-			endConn:Disconnect()
-			if outsideConn then outsideConn:Disconnect() end
-		end
-	end)
+	-- (Teardown for moveConn/endConn/outsideConn lives at the END of this
+	-- builder — see "Teardown" below. The previous handler here referenced
+	-- outsideConn before its local declaration, so it captured a nil global
+	-- and the outside-click connection was never actually disconnected.)
 
 	-- ── Open / close ──────────────────────────────────────────
 	local open=false
@@ -3141,7 +3113,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 	end
 
 	local SCROLL_CLOSE_THRESHOLD=45
-	ContentScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+	local scrollCloseConn = ContentScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
 		if open and math.abs(ContentScroll.CanvasPosition.Y-scrollAnchorY)>SCROLL_CLOSE_THRESHOLD then
 			closePanel()
 		end
@@ -3212,7 +3184,15 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 			end
 		end)
 
+		-- Declared before finishPick so it can disconnect BOTH connections.
+		-- Previously only the path that fired disconnected itself: after a
+		-- successful click-pick, escConn stayed alive forever, and a later
+		-- Escape press replayed the restore animation and reopened the panel.
+		local pickConn, escConn
+
 		local function finishPick(col)
+			if pickConn then pickConn:Disconnect(); pickConn=nil end
+			if escConn  then escConn:Disconnect();  escConn=nil  end
 			stopEyedropper()
 			PromptBlocker.Visible=false
 			if col then
@@ -3231,9 +3211,7 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 			task.defer(function() openPanel() end)
 		end
 
-		local pickConn
 		pickConn=eyeOverlay.MouseButton1Click:Connect(function()
-			pickConn:Disconnect()
 			local mp=UserInputService:GetMouseLocation()
 			local pickedCol = nil
 			local ok, guiObjects = pcall(function()
@@ -3262,11 +3240,9 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 			finishPick(pickedCol)
 		end)
 
-		local escConn
 		escConn=UserInputService.InputBegan:Connect(function(i,gp)
 			if gp then return end
 			if i.KeyCode==Enum.KeyCode.Escape then
-				escConn:Disconnect()
 				finishPick(nil)
 			end
 		end)
@@ -3296,6 +3272,26 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 
 	chooseBtn:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
 		if open then positionPanel() end
+	end)
+
+	-- Teardown: selectPage destroys rows on every tab switch. The floating
+	-- panel, eyedropper overlay, and cursor hint live in ScreenGui, and four
+	-- connections live on UserInputService/ContentScroll — none of those die
+	-- with the row, so each rebuild used to leak all of them.
+	row.AncestryChanged:Connect(function()
+		if not row.Parent then
+			moveConn:Disconnect()
+			endConn:Disconnect()
+			outsideConn:Disconnect()
+			scrollCloseConn:Disconnect()
+			if LG_activeColorPickerClose == closePanel then
+				LG_activeColorPickerClose = nil
+				LG_colorPickerOpen = false
+			end
+			panel:Destroy()
+			eyeOverlay:Destroy()
+			cursorHint:Destroy()
+		end
 	end)
 
 	if divOrder then addDivider(card,divOrder) end
@@ -3348,7 +3344,7 @@ local function buildSidebarRow(tabName, _iconName, subText)
 	tabIco.BackgroundTransparency=1; tabIco.ImageColor3=Color3.fromRGB(255,255,255)
 	tabIco.ZIndex=17; tabIco.Parent=iconBg
 	if LG_ICON_TAB ~= "" then tabIco.Image=LG_ICON_TAB end
-	table.insert(LG_TAB_REFS, tabIco)
+	if LG_ICON_TAB == "" and not LG_iconsFlushed then table.insert(LG_TAB_REFS, tabIco) end
 
 	local lbl=Instance.new("TextLabel"); lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium
 	lbl.TextSize=13; lbl.TextColor3=T.textPrimary; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=16
@@ -3405,6 +3401,20 @@ function selectPage(name)
 	titleLbl.TextXAlignment=Enum.TextXAlignment.Left; titleLbl.LayoutOrder=0; titleLbl.ZIndex=14; titleLbl.Parent=ContentList
 
 	local order=10
+	-- Persist programmatic handle:SetValue(...) calls into the ctrl record,
+	-- mirroring what the wrapped callbacks below do for user interaction.
+	-- Without this, SetValue from code (e.g. the masterSlider example in the
+	-- docs) displayed correctly but silently reverted on the next tab
+	-- switch, because rebuilds read ctrl.default / ctrl.value / etc.
+	local function persistSetValue(ctrl, applyFn)
+		local h = ctrl._handle
+		if not (h and h.SetValue) then return end
+		local orig = h.SetValue
+		h.SetValue = function(selfArg, ...)
+			applyFn(ctrl, ...)
+			return orig(selfArg, ...)
+		end
+	end
 	for gi,sec in ipairs(tabDat.sections) do
 		if sec.header then
 			spacer(ContentList,gi==1 and 8 or 18,order); order+=1
@@ -3427,21 +3437,30 @@ function selectPage(name)
 			if ctrl.type=="toggle" then
 				local wrap = function(v) ctrl.default = v; if userCb then userCb(v) end end
 				ctrl._handle=buildToggle(card,ctrl.label,ctrl.default,wrap,ro,dv)
+				persistSetValue(ctrl, function(c,v) c.default = v end)
 			elseif ctrl.type=="slider" then
 				local wrap = function(v) ctrl.default = v; if userCb then userCb(v) end end
 				ctrl._handle=buildSlider(card,ctrl.label,ctrl.default,wrap,userCb~=nil,ro,dv)
+				persistSetValue(ctrl, function(c,v) c.default = math.clamp(v,0,1) end)
 			elseif ctrl.type=="info" then
 				ctrl._handle=buildInfo(card,ctrl.label,ctrl.value,ro,dv)
+				persistSetValue(ctrl, function(c,v) c.value = tostring(v) end)
 			elseif ctrl.type=="label" then
 				ctrl._handle=buildLabel(card,ctrl.text,ro,dv)
+				persistSetValue(ctrl, function(c,v) c.text = tostring(v) end)
 			elseif ctrl.type=="dropdown" then
 				local wrap = function(i,opt) ctrl.default = i; if userCb then userCb(i,opt) end end
 				ctrl._handle=buildDropdown(card,ctrl.label,ctrl.options,ctrl.default,wrap,ro,dv)
+				persistSetValue(ctrl, function(c,idx) c.default = math.clamp(idx,1,#c.options) end)
 			elseif ctrl.type=="button" then
 				ctrl._handle=buildButton(card,ctrl.label,ctrl.btnText,ctrl.callback,ro,dv)
 			elseif ctrl.type=="colorpicker" then
 				local wrap=function(col,a) ctrl.defaultColor=col; ctrl.defaultAlpha=a; if ctrl.callback then ctrl.callback(col,a) end end
 				ctrl._handle=buildColorPicker(card,ctrl.label,ctrl.defaultColor,wrap,ro,dv)
+				persistSetValue(ctrl, function(c,col,alpha)
+					c.defaultColor = col
+					if alpha then c.defaultAlpha = math.clamp(alpha,0,1) end
+				end)
 			end
 		end
 	end
@@ -4060,14 +4079,17 @@ local function runSearch()
 	task.spawn(function() showSRF(math.max(1, totalRows), myGen) end)
 end
 
--- Poll every frame while focused so no keystroke is missed
+-- Event-driven search: GetPropertyChangedSignal("Text") fires for every
+-- keystroke (and programmatic clears), so nothing is missed — without the
+-- previous Heartbeat connection running runSearch() 60×/s while focused.
+SearchBox:GetPropertyChangedSignal("Text"):Connect(runSearch)
 SearchBox.Focused:Connect(function()
-	LG_lastSearchQ = ""  -- force re-evaluation on focus
-	local conn
-	conn = RunService.Heartbeat:Connect(function()
-		if not SearchBox:IsFocused() then conn:Disconnect(); return end
+	-- Refocusing with text still in the box should reopen the results panel
+	-- (matches the old polling behavior, which re-ran the query on focus).
+	if SearchBox.Text ~= "" then
+		LG_lastSearchQ = ""  -- force re-evaluation
 		runSearch()
-	end)
+	end
 end)
 -- Reset search state when focus is lost
 SearchBox.FocusLost:Connect(function()
@@ -4546,6 +4568,15 @@ local function takeThemeSnapshot()
 		elseif d:IsA("UIStroke") and LG_themeSnap.strT[d] == nil then
 			LG_themeSnap.strT[d] = d.Transparency
 		end
+	end)
+	-- Counterpart to the hook above. selectPage destroys every control row on
+	-- each tab switch; without this, the snapshot maps kept strong references
+	-- to all of those dead instances forever (unbounded growth, and applyTheme
+	-- iterated over the corpses on every theme switch).
+	Window.DescendantRemoving:Connect(function(d)
+		LG_themeSnap.bgT[d]  = nil
+		LG_themeSnap.bgC[d]  = nil
+		LG_themeSnap.strT[d] = nil
 	end)
 end
 
@@ -5190,7 +5221,7 @@ showNotif = function(opts)
 	notifIcon.ZIndex = 51
 	notifIcon.Parent = card
 	if LG_ICON_NOTIF ~= "" then notifIcon.Image = LG_ICON_NOTIF end
-	table.insert(LG_NOTIF_REFS, notifIcon)
+	if LG_ICON_NOTIF == "" and not LG_iconsFlushed then table.insert(LG_NOTIF_REFS, notifIcon) end
 
 	local titleLbl = Instance.new("TextLabel")
 	titleLbl.Size = UDim2.new(1, -52, 0, 18)
