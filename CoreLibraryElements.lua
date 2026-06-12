@@ -475,7 +475,7 @@ local player    = Players.LocalPlayer
 -- session, destroy them before building fresh. Prevents stacking
 -- two UIs when the script is re-run without rejoining.
 -- ============================================================
-local LG_VERSION = 143
+local LG_VERSION = 144
 
 do
 	local existing = gui:FindFirstChild("LiquidGlassUI")
@@ -485,13 +485,249 @@ do
 end
 
 -- ============================================================
+-- iOS-STYLE SPRING MOTION ENGINE
+-- ============================================================
+-- Apple's UI (incl. the Dynamic Island) animates with damped springs —
+-- spring(response, dampingFraction) — not duration+easing curves. The feel
+-- comes from three properties TweenService cannot give:
+--   1. Retargetable mid-flight: a new goal keeps the current velocity, so
+--      interrupted animations bend instead of restarting.
+--   2. Gesture handoff: a flick's finger velocity becomes the spring's
+--      initial velocity, so the UI carries your momentum.
+--   3. Physical overshoot: dampingFraction < 1 produces the bounce/jiggle
+--      as a single continuous motion, not chained tweens.
+-- This solver is the closed-form damped harmonic oscillator (exact, stable
+-- at any framerate). response ≈ perceptual duration; damping 1 = smooth,
+-- ~0.85 = snappy, ~0.65 = bouncy (Apple's island ≈ 0.62–0.70).
+--
+-- opts for Motion.spring(inst, props, opts):
+--   response  seconds-ish feel duration            (default 0.35)
+--   damping   1 = no bounce … 0.4 = very jiggly    (default 1)
+--   deadline  hard-snap to goal at this elapsed time. Used when legacy
+--             task.delay choreography writes the property afterwards —
+--             guarantees the spring is dead before that write.
+--   velocity  {prop = same-typed value} initial velocity (gesture handoff)
+-- Supported value types: number, UDim2, Vector2. (Colours/opacities keep
+-- TweenService — spring texture is invisible there.)
+-- NOTE: one top-level local on purpose; see the register-ceiling note at
+-- LG_ICON_REFS. Everything lives inside this table.
+local Motion = {}
+do
+	local TAU      = math.pi * 2
+	local POS_EPS  = 0.002
+	local VEL_EPS  = 0.02
+
+	local active = {}      -- [inst] = { [prop] = state }
+	local activeCount = 0
+	local loopConn = nil
+
+	local function packValue(v)
+		local tv = typeof(v)
+		if tv == "number" then
+			return {v}, "number"
+		elseif tv == "UDim2" then
+			return {v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset}, "UDim2"
+		elseif tv == "Vector2" then
+			return {v.X, v.Y}, "Vector2"
+		end
+		return nil
+	end
+	local function unpackValue(kind, a)
+		if kind == "number" then return a[1]
+		elseif kind == "UDim2" then return UDim2.new(a[1], a[2], a[3], a[4])
+		else return Vector2.new(a[1], a[2]) end
+	end
+
+	-- Advance one spring by dt using the analytic solution. Returns true
+	-- when every component is at rest within epsilon.
+	local function stepSpring(st, dt)
+		local f = st.omega
+		local d = st.damping
+		local done = true
+		for i = 1, #st.pos do
+			local g = st.goal[i]
+			local o = st.pos[i] - g
+			local v = st.vel[i]
+			local x, nv
+			if d < 1 then
+				local c    = math.sqrt(1 - d*d)
+				local e    = math.exp(-d*f*dt)
+				local cosA = math.cos(c*f*dt)
+				local sinA = math.sin(c*f*dt)
+				local B    = (v + d*f*o) / (c*f)
+				x  = g + e*(o*cosA + B*sinA)
+				nv = e*((B*c*f - o*d*f)*cosA - (o*c*f + B*d*f)*sinA)
+			else
+				local e = math.exp(-f*dt)
+				x  = g + e*(o + (v + f*o)*dt)
+				nv = e*(v - (v + f*o)*f*dt)
+			end
+			st.pos[i] = x
+			st.vel[i] = nv
+			if math.abs(x - g) > POS_EPS or math.abs(nv) > VEL_EPS then done = false end
+		end
+		return done
+	end
+
+	local function dropProp(imap, inst, prop)
+		if imap[prop] then
+			imap[prop] = nil
+			activeCount = activeCount - 1
+			if next(imap) == nil then active[inst] = nil end
+		end
+	end
+
+	local function update(_, dt)
+		for inst, imap in pairs(active) do
+			if inst.Parent == nil then
+				-- Destroyed (or unparented): drop silently, leave value as-is.
+				for _ in pairs(imap) do activeCount = activeCount - 1 end
+				active[inst] = nil
+			else
+				for prop, st in pairs(imap) do
+					st.elapsed = st.elapsed + dt
+					local done = stepSpring(st, dt)
+					if st.deadline and st.elapsed >= st.deadline then done = true end
+					if done then
+						inst[prop] = unpackValue(st.kind, st.goal)
+						dropProp(imap, inst, prop)
+					else
+						inst[prop] = unpackValue(st.kind, st.pos)
+					end
+				end
+			end
+		end
+		if activeCount <= 0 and loopConn then
+			loopConn:Disconnect(); loopConn = nil; activeCount = 0
+		end
+	end
+
+	function Motion.spring(inst, props, opts)
+		opts = opts or {}
+		local response = math.max(opts.response or 0.35, 0.03)
+		local damping  = math.clamp(opts.damping or 1, 0.05, 1)
+		local omega    = TAU / response
+		local imap = active[inst]
+		if not imap then imap = {}; active[inst] = imap end
+		local touched = {}
+		for prop, goalValue in pairs(props) do
+			local goal, kind = packValue(goalValue)
+			if goal then
+				local cur = packValue(inst[prop])
+				local st = imap[prop]
+				if st and st.kind == kind then
+					-- Retarget: re-read live position, KEEP velocity — the
+					-- momentum carry that makes interruption feel fluid.
+					st.pos = cur
+					st.goal = goal
+					st.omega = omega
+					st.damping = damping
+					st.deadline = opts.deadline
+					st.elapsed = 0
+				else
+					st = {
+						kind = kind, goal = goal, pos = cur, vel = {},
+						omega = omega, damping = damping,
+						deadline = opts.deadline, elapsed = 0,
+					}
+					for i = 1, #goal do st.vel[i] = 0 end
+					imap[prop] = st
+					activeCount = activeCount + 1
+				end
+				if opts.velocity and opts.velocity[prop] then
+					local vv = packValue(opts.velocity[prop])
+					if vv and #vv == #st.vel then
+						for i = 1, #vv do st.vel[i] = vv[i] end
+					end
+				end
+				touched[#touched + 1] = prop
+			end
+		end
+		if activeCount > 0 and not loopConn then
+			loopConn = RunService.RenderStepped:Connect(function(dt) update(nil, dt) end)
+		end
+		return {
+			Cancel = function()
+				local m = active[inst]
+				if not m then return end
+				for _, p in ipairs(touched) do dropProp(m, inst, p) end
+			end,
+			Play = function() end,  -- parity with Tween handles; springs auto-play
+		}
+	end
+
+	-- Stop springs on an instance (all, or one property), leaving the
+	-- current value in place — same semantics as Tween:Cancel(). Call this
+	-- before writing a Motion-animated property directly.
+	function Motion.stop(inst, prop)
+		local imap = active[inst]
+		if not imap then return end
+		if prop then
+			dropProp(imap, inst, prop)
+		else
+			for p in pairs(imap) do
+				imap[p] = nil
+				activeCount = activeCount - 1
+			end
+			active[inst] = nil
+		end
+	end
+end
+
+-- ============================================================
 -- TWEEN HELPER
 -- ============================================================
+-- Routed for iOS feel: transform properties (Size/Position/CanvasPosition)
+-- ride physical springs via Motion; fades, colours and micro-animations
+-- (<0.1s) keep TweenService, where spring texture is invisible anyway.
+-- Easing intent maps to Apple spring params: Back/Elastic → bouncy
+-- (damping 0.66), Bounce → 0.6, everything else → smooth (damping 1);
+-- EasingDirection.In calls are exits and stay smooth. deadline = legacy
+-- duration, so every task.delay choreographed against the old timings
+-- still lands after the animation has fully resolved.
 local function tween(inst, dur, props, style, dir)
-	local t = TweenService:Create(inst,
-		TweenInfo.new(dur or 0.25, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out),
-		props)
-	t:Play(); return t
+	dur = dur or 0.25
+	local springProps, tsProps
+	for k, v in pairs(props) do
+		if dur >= 0.1 and (k == "Size" or k == "Position" or k == "CanvasPosition") then
+			springProps = springProps or {}
+			springProps[k] = v
+		else
+			tsProps = tsProps or {}
+			tsProps[k] = v
+		end
+	end
+	local handle
+	if springProps then
+		local damping = 1
+		if style == Enum.EasingStyle.Back or style == Enum.EasingStyle.Elastic then
+			damping = 0.66
+		elseif style == Enum.EasingStyle.Bounce then
+			damping = 0.6
+		end
+		if dir == Enum.EasingDirection.In then damping = 1 end
+		handle = Motion.spring(inst, springProps, {
+			response = dur * (damping < 1 and 0.62 or 0.85),
+			damping  = damping,
+			deadline = dur,
+		})
+	end
+	if tsProps then
+		local t = TweenService:Create(inst,
+			TweenInfo.new(dur, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out),
+			tsProps)
+		t:Play()
+		if handle then
+			local sh = handle
+			handle = {
+				Cancel = function() sh:Cancel(); t:Cancel() end,
+				Play   = function() end,
+			}
+		else
+			handle = t
+		end
+	end
+	return handle
 end
 
 -- ============================================================
@@ -1605,14 +1841,19 @@ local function diRestoreSize()
 	if diIsCollapsing then return end
 	local targetW = DI_SHOWING and diCurrentTotalW or DI_DOT
 	local targetH = DI_SHOWING and DI_H or DI_DOT
-	tween(DI_Frame, 0.3, {Size=UDim2.fromOffset(targetW, targetH)}, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	-- Bouncy restore; if the cursor leaves mid-grow this retargets the SAME
+	-- spring with its current velocity, so the pill bends back fluidly
+	-- instead of restarting — the core of the iOS hover feel.
+	Motion.spring(DI_Frame, {Size = UDim2.fromOffset(targetW, targetH)},
+		{response = 0.26, damping = 0.68})
 end
 
 -- Hover: grow slightly on enter, restore on leave
 diHitbox.MouseEnter:Connect(function()
 	if activeDragLabel ~= nil or diIsCollapsing then return end
 	local cw = DI_Frame.AbsoluteSize.X; local ch = DI_Frame.AbsoluteSize.Y
-	tween(DI_Frame, 0.18, {Size=UDim2.fromOffset(cw+8, ch+4)}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	Motion.spring(DI_Frame, {Size = UDim2.fromOffset(cw+8, ch+4)},
+		{response = 0.20, damping = 0.85})
 end)
 diHitbox.MouseLeave:Connect(function()
 	if activeDragLabel ~= nil then return end
@@ -1620,6 +1861,7 @@ diHitbox.MouseLeave:Connect(function()
 end)
 
 diClearContent = function()
+	Motion.stop(diProgress)  -- kill any in-flight progress spring before the direct resets below
 	diIcon.Image = ""
 	diLabel.Text = ""
 	diBadgeLbl.Text = ""
@@ -1635,6 +1877,7 @@ diCancelAll = function()
 	if diExpandTextTask then task.cancel(diExpandTextTask); diExpandTextTask = nil end
 	if diExpandJigTask  then task.cancel(diExpandJigTask);  diExpandJigTask  = nil end
 	if diHideThread     then task.cancel(diHideThread);     diHideThread     = nil end
+	Motion.stop(DI_Frame)  -- springs are the new tweens; cancel them with the threads
 	diOpening = false
 	diIsCollapsing = false
 end
@@ -1644,6 +1887,7 @@ local function diHide()
 	diHideThread = nil
 	diCollapseThread = nil
 	-- Snap back to dot — frame stays visible
+	Motion.stop(DI_Frame)  -- a live spring would overwrite this snap next frame
 	DI_Frame.Size = UDim2.fromOffset(DI_DOT, DI_DOT)
 	DI_Frame.BackgroundTransparency = 0
 	-- Clear all content THEN restore GroupTransparency so nothing flashes inside the dot
@@ -1665,25 +1909,13 @@ end
 
 local function diCollapseToDot(onDone)
 	diIsCollapsing = true
-	-- Phase 1: tween width AND height together to DI_DOT.
-	-- Use Quad/In (linear-ish) instead of Quint/In to avoid the front-loaded
-	-- easing that makes the frame look like it's frozen in a wide pill before
-	-- snapping to a dot at the end.
-	TweenService:Create(DI_Frame,
-		TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-		{Size=UDim2.fromOffset(DI_DOT, DI_DOT)}):Play()
-	-- Phase 2: once it's a circle, pulse outward 4px then snap back (tiny bounce)
-	task.delay(0.18, function()
-		TweenService:Create(DI_Frame,
-			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{Size=UDim2.fromOffset(DI_DOT + 8, DI_DOT + 8)}):Play()
-		task.delay(0.08, function()
-			TweenService:Create(DI_Frame,
-				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{Size=UDim2.fromOffset(DI_DOT, DI_DOT)}):Play()
-			if onDone then task.delay(0.15, onDone) end
-		end)
-	end)
+	-- ONE underdamped spring does what the old three-phase tween chain faked:
+	-- the island compresses slightly past the dot size and pops back as the
+	-- energy bleeds off — the iOS collapse squish, as a single continuous
+	-- physical motion. deadline guarantees it is resolved before onDone.
+	Motion.spring(DI_Frame, {Size = UDim2.fromOffset(DI_DOT, DI_DOT)},
+		{response = 0.26, damping = 0.74, deadline = 0.42})
+	if onDone then task.delay(0.42, onDone) end
 end
 
 local function diDismiss()
@@ -1753,7 +1985,11 @@ local function diExpand(ctrlType, labelText, valueText, isDragging)
 	local textDelay  = expandTime * 0.27  -- reveal text at 27% through expand
 
 	diOpening = true
-	tween(DI_Frame, expandTime, {Size=UDim2.fromOffset(totalW, DI_H)}, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	-- Island expansion spring, tuned to Apple's island (≈ spring(response 0.5,
+	-- damping 0.7) at the default expandTime). Bounce tail runs to 1.4× so the
+	-- pill visibly wobbles into place; any interrupt retargets it with momentum.
+	Motion.spring(DI_Frame, {Size = UDim2.fromOffset(totalW, DI_H)},
+		{response = expandTime * 0.62, damping = 0.65, deadline = expandTime * 1.4})
 	task.delay(expandTime, function() diOpening = false end)
 
 	diExpandTextTask = task.delay(textDelay, function()
@@ -1801,9 +2037,8 @@ diShow = function(ctrlType, labelText, valueText, isDragging)
 			diClearContent()
 			diContent.GroupTransparency = 0
 			if isSliderInterrupt then
-				TweenService:Create(DI_Frame,
-					TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
-					{Size=UDim2.fromOffset(DI_DOT, DI_DOT)}):Play()
+				Motion.spring(DI_Frame, {Size = UDim2.fromOffset(DI_DOT, DI_DOT)},
+					{response = 0.10, damping = 1, deadline = 0.12})
 				task.delay(0.12, function()
 					DI_SHOWING = true
 					diExpand(ctrlType, labelText, valueText, isDragging)
@@ -2062,9 +2297,12 @@ local function buildToggle(card, label, defaultVal, callback, rowOrder, divOrder
 		local targetW = math.clamp(26 + speed * 1.1, 26, 34)
 		-- Clamp left edge so knob right edge (rawX + targetW) stays inside pill (max 49)
 		rawX = math.clamp(rawX, 3, 49 - targetW)
-		if togKnobTween then togKnobTween:Cancel() end
-		togKnobTween = tween(knob, 0.05, {Size=UDim2.fromOffset(targetW, 16), Position=UDim2.new(0, rawX, 0.5, 0)},
-			Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+		-- Retarget one gel-tracking spring per move (no cancel): velocity
+		-- carries between retargets, so the knob trails and stretches behind
+		-- the pointer exactly like an iOS toggle thumb.
+		togKnobTween = Motion.spring(knob,
+			{Size = UDim2.fromOffset(targetW, 16), Position = UDim2.new(0, rawX, 0.5, 0)},
+			{response = 0.14, damping = 0.9})
 		-- Live colour: lerp between off/on based on knob position fraction
 		local frac = (rawX - 3) / 20
 		local col  = T.toggleOff:Lerp(T.toggleOn, frac)
@@ -2167,17 +2405,13 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 			activeDragLabel = label
 			ContentScroll.ScrollingEnabled = false
 			SBScroll.ScrollingEnabled      = false
-			-- Knob grow: multi-bounce chain for a jiggly expand
-			tween(knob,0.10,{Size=UDim2.fromOffset(26,26)},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-			task.delay(0.10,function()
-				tween(knob,0.09,{Size=UDim2.fromOffset(20,20)},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-				task.delay(0.09,function()
-					tween(knob,0.08,{Size=UDim2.fromOffset(24,24)},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-					task.delay(0.08,function()
-						tween(knob,0.07,{Size=UDim2.fromOffset(22,22)},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-					end)
-				end)
-			end)
+			-- Knob grow: one underdamped spring launched with outward velocity
+			-- replaces the old four-tween bounce chain — the same
+			-- 26→20→24→22 ring, but as a single continuous physical motion
+			-- that any later retarget inherits momentum from.
+			Motion.spring(knob, {Size = UDim2.fromOffset(22,22)},
+				{response = 0.26, damping = 0.42,
+				 velocity = {Size = UDim2.fromOffset(240,240)}})
 			local tp=track.AbsolutePosition; local ts2=track.AbsoluteSize
 			val=math.clamp((i.Position.X-tp.X)/ts2.X,0,1)
 			fill.Size=UDim2.fromScale(val,1); knob.Position=UDim2.new(val,0,0.5,0)
@@ -2239,7 +2473,10 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 			local dx = math.abs(curX - lastX)
 			-- dx is pixels/frame; map 0→22px wide, 8+→32px wide, clamped
 			local targetW = math.clamp(22 + dx * 1.4, 22, 34)
-			tween(knob, 0.06, {Size=UDim2.fromOffset(targetW, 22)}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			-- Gel stretch: retarget the tracking spring; momentum carries
+			-- between move events so the knob breathes instead of stepping.
+			Motion.spring(knob, {Size = UDim2.fromOffset(targetW, 22)},
+				{response = 0.15, damping = 0.85})
 		end
 		lastX = curX
 		-- Update the Dynamic Island FIRST, before firing the user callback.
@@ -2280,11 +2517,11 @@ local function buildSlider(card, label, defaultVal, callback, hasUserCb, rowOrde
 		lastX = nil  -- reset velocity tracker
 		ContentScroll.ScrollingEnabled = true
 		SBScroll.ScrollingEnabled      = true
-		-- Knob shrink: overshoot down then spring back to rest (jiggly collapse)
-		tween(knob,0.08,{Size=UDim2.fromOffset(14,14)},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-		task.delay(0.08,function()
-			tween(knob,0.35,{Size=UDim2.fromOffset(17,17)},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-		end)
+		-- Knob shrink: one spring with inward launch velocity — dips below
+		-- rest size and pops back, replacing the old two-tween overshoot.
+		Motion.spring(knob, {Size = UDim2.fromOffset(17,17)},
+			{response = 0.30, damping = 0.5,
+			 velocity = {Size = UDim2.fromOffset(-180,-180)}})
 		if callback then
 			DI_QUEUE = {}
 			if DI_SHOWING and diCurrentLabel == label then
@@ -2501,6 +2738,7 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 		activeDropdown=nil
 		activeDropdownClose=nil
 		if LG_closePanelsInstant then
+			Motion.stop(panel)  -- a live open spring would overwrite these resets
 			panel.Visible=false
 			panel.BackgroundTransparency=0
 			panel.Size=UDim2.fromOffset(panel.Size.X.Offset, targetH)
@@ -2515,9 +2753,8 @@ local function buildDropdown(card, label, options, defaultIndex, callback, rowOr
 			tween(panelList2, 0.10, {GroupTransparency=1}, Enum.EasingStyle.Quad)
 		end
 		tween(panel, 0.10, {BackgroundTransparency=1})
-		TweenService:Create(panel,
-			TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-			{Size=UDim2.fromOffset(curW, 0)}):Play()
+		Motion.spring(panel, {Size = UDim2.fromOffset(curW, 0)},
+			{response = 0.20, damping = 1, deadline = 0.25})
 		task.delay(0.27, function()
 			panel.Visible=false
 			panel.BackgroundTransparency=0
@@ -3075,14 +3312,14 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 		LG_activeColorPickerClose=nil
 		if DI_SHOWING and diCurrentLabel == label and not skipDIDismiss then diDismiss() end
 		if LG_closePanelsInstant then
+			Motion.stop(panel)  -- a live open spring would overwrite these resets
 			panel.Visible=false; panel.GroupTransparency=0
 			panel.Size=UDim2.fromOffset(PANEL_W,PANEL_H)
 			return
 		end
 		tween(panel,0.12,{GroupTransparency=1})
-		TweenService:Create(panel,
-			TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-			{Size=UDim2.fromOffset(0,0)}):Play()
+		Motion.spring(panel, {Size = UDim2.fromOffset(0, 0)},
+			{response = 0.22, damping = 1, deadline = 0.28})
 		task.delay(0.30,function()
 			panel.Visible=false
 			panel.GroupTransparency=0
@@ -3113,9 +3350,8 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 		panel.GroupTransparency=1
 		panel.Visible=true
 		tween(panel,0.04,{GroupTransparency=0})
-		TweenService:Create(panel,
-			TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-			{Size=UDim2.fromOffset(PANEL_W,PANEL_H)}):Play()
+		Motion.spring(panel, {Size = UDim2.fromOffset(PANEL_W, PANEL_H)},
+			{response = 0.30, damping = 0.64})
 		hueKnob.Position=UDim2.new(knobPos(currentH),0,0.5,0)
 		hueKnob.BackgroundColor3=ColorUtil.fromHSV(currentH,1,1)
 		satKnob.Position=UDim2.new(knobPos(currentS),0,0.5,0)
@@ -3171,9 +3407,11 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 		local savedSize = Window.Size
 		local savedPos  = Window.Position
 		tween(panel,0.18,{GroupTransparency=1})
+		Motion.spring(Window, {Size = UDim2.fromOffset(0, 0)},
+			{response = 0.24, damping = 1, deadline = 0.30})
 		TweenService:Create(Window,
-			TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-			{Size=UDim2.fromOffset(0,0), BackgroundTransparency=1}):Play()
+			TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{BackgroundTransparency=1}):Play()
 		tween(Shadow,0.3,{ImageTransparency=1})
 		tween(Overlay,0.3,{BackgroundTransparency=1})
 		tween(Blur,0.3,{Size=0})
@@ -3214,8 +3452,10 @@ local function buildColorPicker(card, label, defaultColor, callback, rowOrder, d
 			Window.BackgroundTransparency=1; Shadow.ImageTransparency=1
 			Overlay.BackgroundTransparency=1; Blur.Size=0
 			Window.Visible=true; Shadow.Visible=true; Overlay.Visible=true; WindowBackdrop.Visible=true
-			TweenService:Create(Window, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-				{Size=savedSize, Position=savedPos, BackgroundTransparency=0.18}):Play()
+			Motion.spring(Window, {Size = savedSize, Position = savedPos},
+				{response = 0.27, damping = 0.66, deadline = 0.65})
+			TweenService:Create(Window, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{BackgroundTransparency=0.18}):Play()
 			tween(Shadow,0.4,{Size=UDim2.fromOffset(savedSize.X.Offset+80,savedSize.Y.Offset+80),Position=savedPos,ImageTransparency=0.45})
 			tween(Overlay,0.4,{BackgroundTransparency=0.15})
 			tween(Blur,0.3,{Size=24})
@@ -4325,9 +4565,8 @@ local function showPromptSheet(opts)
 		PromptBlocker.Visible = false
 		unlockScrollForPrompt()
 		tween(sheet, 0.12, {GroupTransparency = 1})
-		TweenService:Create(sheet,
-			TweenInfo.new(0.30, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-			{Size = UDim2.fromOffset(0, 0)}):Play()
+		Motion.spring(sheet, {Size = UDim2.fromOffset(0, 0)},
+			{response = 0.24, damping = 1, deadline = 0.30})
 		task.delay(0.32, function() sheet:Destroy() end)
 	end
 
@@ -4455,9 +4694,8 @@ local function showPromptSheet(opts)
 	sheet.GroupTransparency = 1
 	sheet.Size              = UDim2.fromOffset(0, 0)
 	tween(sheet, 0.06, {GroupTransparency = 0})
-	TweenService:Create(sheet,
-		TweenInfo.new(0.48, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{Size = UDim2.fromOffset(SHEET_W, sheetH)}):Play()
+	Motion.spring(sheet, {Size = UDim2.fromOffset(SHEET_W, sheetH)},
+		{response = 0.32, damping = 0.62})
 end
 
 -- ── Theme integration ────────────────────────────────────────
@@ -4832,8 +5070,8 @@ function LiquidGlass:Open()
 	tween(Shadow,0.45,{ImageTransparency=0.45})
 	tween(Window,0.45,{BackgroundTransparency=0.18})
 	tween(Blur,0.45,{Size=24})
-	local info=TweenInfo.new(0.5,Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-	TweenService:Create(Window,info,{Size=UDim2.fromOffset(w,h)}):Play()
+	Motion.spring(Window, {Size = UDim2.fromOffset(w, h)},
+		{response = 0.34, damping = 0.64, deadline = 0.8})
 end
 
 function LiquidGlass:Close()
@@ -5095,9 +5333,8 @@ local function doIntro()
 	tween(Shadow,  0.5, {ImageTransparency=0.45})
 	tween(Window,  0.5, {BackgroundTransparency=0.18})
 	tween(Blur,    0.5, {Size=24})
-	TweenService:Create(Window,
-		TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{Size=UDim2.fromOffset(w,h)}):Play()
+	Motion.spring(Window, {Size = UDim2.fromOffset(w, h)},
+		{response = 0.36, damping = 0.62, deadline = 0.85})
 	tween(GlowCanvas, 0.55, {GroupTransparency=1}, Enum.EasingStyle.Quad)
 
 	-- Clean up glow after fade
@@ -5147,13 +5384,12 @@ local function restack()
 	for i, rec in ipairs(notifStack) do
 		local targetY = notifYFor(i - 1)
 		rec.yTarget = targetY
-		TweenService:Create(rec.frame,
-			TweenInfo.new(0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-			{ Position = UDim2.fromOffset(0, targetY) }):Play()
+		Motion.spring(rec.frame, {Position = UDim2.fromOffset(0, targetY)},
+			{response = 0.32, damping = 0.82})
 	end
 end
 
-local function dismissCard(rec, instant)
+local function dismissCard(rec, instant, flickVelY)
 	if rec.dismissThread then
 		task.cancel(rec.dismissThread)
 		rec.dismissThread = nil
@@ -5162,10 +5398,13 @@ local function dismissCard(rec, instant)
 		if r == rec then table.remove(notifStack, i); break end
 	end
 	local dur = instant and 0.01 or 0.42
-	-- Smooth slide up + fade out using matching Sine/Out easing
-	TweenService:Create(rec.frame,
-		TweenInfo.new(dur, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-		{ Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20)) }):Play()
+	-- Exit spring. flickVelY is the finger's release velocity (px/s, negative
+	-- = upward) from a swipe-dismiss: the card leaves carrying the user's own
+	-- momentum — the signature iOS gesture handoff. deadline keeps the
+	-- destroy timer below valid.
+	Motion.spring(rec.frame, {Position = UDim2.fromOffset(0, -(NOTIF_CARD_H + 20))},
+		{response = instant and 0.03 or 0.30, damping = 1, deadline = dur,
+		 velocity = flickVelY and {Position = UDim2.fromOffset(0, flickVelY)} or nil})
 	TweenService:Create(rec.frame,
 		TweenInfo.new(dur * 0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
 		{ GroupTransparency = 1 }):Play()
@@ -5266,9 +5505,8 @@ showNotif = function(opts)
 	local rec = { frame = card, stroke = cardStroke, dismissThread = nil, yTarget = targetY }
 	table.insert(notifStack, rec)
 
-	TweenService:Create(card,
-		TweenInfo.new(NOTIF_ANIM_IN, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Position = UDim2.fromOffset(0, targetY) }):Play()
+	Motion.spring(card, {Position = UDim2.fromOffset(0, targetY)},
+		{response = NOTIF_ANIM_IN * 0.85, damping = 0.64})
 
 	rec.dismissThread = task.delay(duration, function()
 		-- Clear the ref BEFORE calling dismissCard so it doesn't try
@@ -5300,6 +5538,7 @@ showNotif = function(opts)
 		and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
 		currentSwipingCard = card
+		Motion.stop(card, "Position")  -- finger owns the card now; kill entrance/restack springs
 		swipe.active  = true
 		swipe.startY  = input.Position.Y
 		swipe.lastY   = input.Position.Y
@@ -5354,12 +5593,14 @@ showNotif = function(opts)
 			-- Dismiss on either real distance OR a quick upward flick
 			local shouldDismiss = (dy < -20) or (velocity < -350)
 			if shouldDismiss then
-				dismissCard(rec, false)
+				dismissCard(rec, false, velocity)
 			else
-				-- Snap back smoothly
-				TweenService:Create(card,
-					TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-					{ Position = UDim2.fromOffset(0, rec.yTarget) }):Play()
+				-- Snap back on a spring seeded with the finger's release
+				-- velocity: the card carries your momentum for a beat, then
+				-- bounces home — the iOS rubber-band release.
+				Motion.spring(card, {Position = UDim2.fromOffset(0, rec.yTarget)},
+					{response = 0.26, damping = 0.7,
+					 velocity = {Position = UDim2.fromOffset(0, velocity)}})
 				TweenService:Create(card,
 					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 					{ GroupTransparency = 0 }):Play()
